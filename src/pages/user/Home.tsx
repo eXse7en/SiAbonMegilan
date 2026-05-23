@@ -69,9 +69,6 @@ export default function UserHome() {
     const alarmAfterMinutes = parseInt(localStorage.getItem('alarmAfterMinutes') || '15', 10);
     if (!alarmEnabled || shifts.length === 0) return;
 
-    let notifiedBefore = false;
-    let notifiedAfter = false;
-
     const alarmInterval = setInterval(() => {
       const now = getServerTime();
       const activeShifts = resolveActiveShifts(shifts, user, employees);
@@ -133,30 +130,30 @@ export default function UserHome() {
       // Check before shift (masuk)
       if (!hasCheckedIn) {
         const diffBefore = shiftStart.getTime() - now.getTime();
-        if (diffBefore > 0 && diffBefore <= alarmBeforeMinutes * 60000 && !notifiedBefore) {
-          notifiedBefore = true;
-          if ('Notification' in window && Notification.permission === 'granted') {
-            new Notification('Pengingat Absensi Masuk', {
-              body: `Waktu absen masuk untuk shift ${targetShift.name} tinggal ${Math.ceil(diffBefore / 60000)} menit lagi.`,
-            });
-          }
+        if (diffBefore > 0 && diffBefore <= alarmBeforeMinutes * 60000) {
+          const todayDateStr = now.toDateString();
+          checkAndFireAlarm(
+            'Pengingat Absensi Masuk',
+            `Waktu absen masuk untuk shift ${targetShift.name} tinggal ${Math.ceil(diffBefore / 60000)} menit lagi.`,
+            `masuk_target_${targetShift.id || targetShift.name}_${todayDateStr}`
+          );
         }
       }
 
       // Check after shift (pulang)
       if (hasCheckedIn && !hasCheckedOut) {
         const diffAfter = now.getTime() - shiftEnd.getTime();
-        if (diffAfter > 0 && diffAfter >= alarmAfterMinutes * 60000 && !notifiedAfter) {
-          notifiedAfter = true;
-          if ('Notification' in window && Notification.permission === 'granted') {
-            new Notification('Pengingat Absensi Pulang', {
-              body: `Waktu absen pulang untuk shift ${targetShift.name} sudah lewat ${Math.floor(diffAfter / 60000)} menit. Segera lakukan absensi pulang.`,
-            });
-          }
+        if (diffAfter > 0 && diffAfter >= alarmAfterMinutes * 60000) {
+          const todayDateStr = now.toDateString();
+          checkAndFireAlarm(
+            'Pengingat Absensi Pulang',
+            `Waktu absen pulang untuk shift ${targetShift.name} sudah lewat ${Math.floor(diffAfter / 60000)} menit. Segera lakukan absensi pulang.`,
+            `pulang_target_${targetShift.id || targetShift.name}_${todayDateStr}`
+          );
         }
       }
 
-    }, 60000); // Check every minute
+    }, 30000); // Check every 30 seconds for quick response
 
     return () => clearInterval(alarmInterval);
   }, [shifts, user, employees, hasCheckedIn, hasCheckedOut, checkInTime]);

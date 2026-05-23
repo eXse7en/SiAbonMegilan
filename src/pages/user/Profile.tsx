@@ -6,7 +6,8 @@ import { Switch } from '@/components/ui/switch';
 import { Label } from '@/components/ui/label';
 import { Input } from '@/components/ui/input';
 import { toast } from 'sonner';
-import { Camera } from 'lucide-react';
+import { Camera, Volume2 } from 'lucide-react';
+import { playAlarmSound } from '@/utils/alarm';
 import {
   Dialog,
   DialogContent,
@@ -304,6 +305,19 @@ export default function UserProfile() {
                     className="text-center"
                   />
                 </div>
+              </div>
+              <div className="pt-2">
+                <Button 
+                  onClick={() => {
+                    playAlarmSound();
+                    toast.success("Suara alarm diuji! Pastikan volume perangkat Anda aktif.");
+                  }}
+                  variant="outline"
+                  className="w-full flex items-center justify-center gap-2 border-dashed border-teal-500/50 text-teal-600 dark:text-teal-400 hover:bg-teal-50 dark:hover:bg-teal-950/20"
+                >
+                  <Volume2 className="h-4 w-4" />
+                  Uji Suara Alarm (Chime)
+                </Button>
               </div>
             </div>
           )}
