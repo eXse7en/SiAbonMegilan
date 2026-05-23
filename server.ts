@@ -875,7 +875,7 @@ async function startServer() {
       const [attSheet, empSheet, shiftSheet] = await Promise.all([
         getOrCreateSheet('Attendance', ['id', 'nip', 'name', 'date', 'time', 'type', 'location', 'status', 'photoUrl', 'shift']),
         getOrCreateSheet('Employees', ['id', 'name', 'nip', 'office', 'office2', 'email', 'gender', 'cluster', 'unit', 'password', 'photoUrl', 'photoUploadCount']),
-        getOrCreateSheet('Shifts', ['id', 'name', 'startTime', 'endTime', 'fridayEndTime', 'saturdayEndTime', 'checkInBeforeMinutes', 'checkInAfterMinutes', 'checkOutBeforeMinutes', 'checkOutAfterMinutes', 'crossesMidnight', 'isActive', 'unit'])
+        getOrCreateSheet('Shifts', ['id', 'name', 'startTime', 'endTime', 'fridayEndTime', 'saturdayEndTime', 'checkInBeforeMinutes', 'checkInAfterMinutes', 'checkOutBeforeMinutes', 'checkOutAfterMinutes', 'crossesMidnight', 'isActive', 'unit', 'isOffSunday', 'isOffHoliday'])
       ]);
 
       if (!attSheet || !empSheet || !shiftSheet) return res.json({ success: false });
@@ -1415,7 +1415,7 @@ async function startServer() {
     if (doc) {
       try {
         const shifts = await getCachedData('shifts', async () => {
-          const sheet = await getOrCreateSheet('Shifts', ['id', 'name', 'startTime', 'endTime', 'fridayEndTime', 'saturdayEndTime', 'checkInBeforeMinutes', 'checkInAfterMinutes', 'checkOutBeforeMinutes', 'checkOutAfterMinutes', 'crossesMidnight', 'isActive', 'unit']);
+          const sheet = await getOrCreateSheet('Shifts', ['id', 'name', 'startTime', 'endTime', 'fridayEndTime', 'saturdayEndTime', 'checkInBeforeMinutes', 'checkInAfterMinutes', 'checkOutBeforeMinutes', 'checkOutAfterMinutes', 'crossesMidnight', 'isActive', 'unit', 'isOffSunday', 'isOffHoliday']);
           if (sheet) {
             const rows = await sheet.getRows();
             return rows.map(row => ({
@@ -1431,7 +1431,9 @@ async function startServer() {
               checkOutAfterMinutes: parseInt(row.get('checkOutAfterMinutes') || '120'),
               crossesMidnight: String(row.get('crossesMidnight')).toLowerCase() === 'true',
               isActive: String(row.get('isActive')).toLowerCase() === 'true',
-              unit: row.get('unit') || ''
+              unit: row.get('unit') || '',
+              isOffSunday: String(row.get('isOffSunday')).toLowerCase() === 'true',
+              isOffHoliday: String(row.get('isOffHoliday')).toLowerCase() === 'true'
             }));
           }
           return [];
@@ -1451,7 +1453,7 @@ async function startServer() {
     const shift = req.body;
     if (doc) {
       try {
-        const sheet = await getOrCreateSheet('Shifts', ['id', 'name', 'startTime', 'endTime', 'fridayEndTime', 'saturdayEndTime', 'checkInBeforeMinutes', 'checkInAfterMinutes', 'checkOutBeforeMinutes', 'checkOutAfterMinutes', 'crossesMidnight', 'isActive', 'unit']);
+        const sheet = await getOrCreateSheet('Shifts', ['id', 'name', 'startTime', 'endTime', 'fridayEndTime', 'saturdayEndTime', 'checkInBeforeMinutes', 'checkInAfterMinutes', 'checkOutBeforeMinutes', 'checkOutAfterMinutes', 'crossesMidnight', 'isActive', 'unit', 'isOffSunday', 'isOffHoliday']);
         if (sheet) {
           await sheet.addRow({
             ...shift,
@@ -1461,7 +1463,9 @@ async function startServer() {
             checkOutAfterMinutes: (shift.checkOutAfterMinutes || 120).toString(),
             crossesMidnight: shift.crossesMidnight.toString(),
             isActive: shift.isActive.toString(),
-            unit: shift.unit || ''
+            unit: shift.unit || '',
+            isOffSunday: (shift.isOffSunday || false).toString(),
+            isOffHoliday: (shift.isOffHoliday || false).toString()
           });
           delete cache['shifts'];
         }
@@ -1514,6 +1518,8 @@ async function startServer() {
             rowToUpdate.set('crossesMidnight', shift.crossesMidnight.toString());
             rowToUpdate.set('isActive', shift.isActive.toString());
             rowToUpdate.set('unit', shift.unit || '');
+            rowToUpdate.set('isOffSunday', (shift.isOffSunday || false).toString());
+            rowToUpdate.set('isOffHoliday', (shift.isOffHoliday || false).toString());
             await rowToUpdate.save();
             delete cache['shifts'];
           }

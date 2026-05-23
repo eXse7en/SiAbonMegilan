@@ -76,6 +76,8 @@ export default function AdminEmployees() {
   const [newShiftCrossesMidnight, setNewShiftCrossesMidnight] = useState(false);
   const [newShiftIsActive, setNewShiftIsActive] = useState(true);
   const [newShiftUnit, setNewShiftUnit] = useState("");
+  const [newShiftIsOffSunday, setNewShiftIsOffSunday] = useState(false);
+  const [newShiftIsOffHoliday, setNewShiftIsOffHoliday] = useState(false);
   const [editingShiftId, setEditingShiftId] = useState<string | null>(null);
 
   // State for Admins
@@ -531,7 +533,9 @@ export default function AdminEmployees() {
         checkOutAfterMinutes: newShiftCheckOutAfter,
         crossesMidnight: newShiftCrossesMidnight,
         isActive: newShiftIsActive,
-        unit: newShiftUnit === "none" ? "" : newShiftUnit
+        unit: newShiftUnit === "none" ? "" : newShiftUnit,
+        isOffSunday: newShiftIsOffSunday,
+        isOffHoliday: newShiftIsOffHoliday
       };
       
       try {
@@ -579,6 +583,8 @@ export default function AdminEmployees() {
     setNewShiftCheckOutAfter(120);
     setNewShiftCrossesMidnight(false);
     setNewShiftIsActive(true);
+    setNewShiftIsOffSunday(false);
+    setNewShiftIsOffHoliday(false);
     setEditingShiftId(null);
   };
 
@@ -595,6 +601,8 @@ export default function AdminEmployees() {
     setNewShiftCrossesMidnight(shift.crossesMidnight);
     setNewShiftIsActive(shift.isActive);
     setNewShiftUnit(shift.unit || "none");
+    setNewShiftIsOffSunday(shift.isOffSunday || false);
+    setNewShiftIsOffHoliday(shift.isOffHoliday || false);
     setEditingShiftId(shift.id);
     setIsAddShiftOpen(true);
   };
@@ -1294,6 +1302,26 @@ export default function AdminEmployees() {
                         Aktifkan Shift
                       </Label>
                     </div>
+                    <div className="flex items-center space-x-2 pt-2">
+                      <Checkbox 
+                        id="shift-off-sunday" 
+                        checked={newShiftIsOffSunday}
+                        onCheckedChange={(checked) => setNewShiftIsOffSunday(checked as boolean)}
+                      />
+                      <Label htmlFor="shift-off-sunday" className="text-sm font-normal">
+                        Libur pada hari Minggu (Tidak bisa absen masuk)
+                      </Label>
+                    </div>
+                    <div className="flex items-center space-x-2 pt-2">
+                      <Checkbox 
+                        id="shift-off-holiday" 
+                        checked={newShiftIsOffHoliday}
+                        onCheckedChange={(checked) => setNewShiftIsOffHoliday(checked as boolean)}
+                      />
+                      <Label htmlFor="shift-off-holiday" className="text-sm font-normal">
+                        Libur pada Hari Libur Nasional (Tidak bisa absen masuk)
+                      </Label>
+                    </div>
                   </div>
                   <DialogFooter>
                     <Button variant="outline" onClick={() => setIsAddShiftOpen(false)}>Batal</Button>
@@ -1347,6 +1375,11 @@ export default function AdminEmployees() {
                             <span className={`px-2 py-1 rounded-full text-xs font-medium ${shift.isActive ? 'bg-green-100 text-green-800' : 'bg-slate-100 text-slate-800'}`}>
                               {shift.isActive ? 'Aktif' : 'Nonaktif'}
                             </span>
+                            {(shift.isOffSunday || shift.isOffHoliday) && (
+                              <div className="mt-1 text-[10px] text-slate-500">
+                                Libur: {[shift.isOffSunday ? "Minggu" : null, shift.isOffHoliday ? "Libnas" : null].filter(Boolean).join(", ")}
+                              </div>
+                            )}
                           </TableCell>
                           <TableCell className="text-right space-x-1">
                             <Button

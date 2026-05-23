@@ -52,9 +52,11 @@ export default function UserHome() {
   const [leaveType, setLeaveType] = useState<string | null>(null);
   const [countdown, setCountdown] = useState<string>('');
   const [announcements, setAnnouncements] = useState<any[]>([]);
+  const [holidays, setHolidays] = useState<any[]>([]);
   const [nextShift, setNextShift] = useState<any>(null);
   const [checkInCountdown, setCheckInCountdown] = useState<string>('');
   const [canCheckIn, setCanCheckIn] = useState(true);
+  const [isHolidayOff, setIsHolidayOff] = useState(false);
   const [isTambahJaga, setIsTambahJaga] = useState(false);
   const [employees, setEmployees] = useState<any[]>([]);
   const [selectedFriendNip, setSelectedFriendNip] = useState<string>('');
@@ -180,13 +182,14 @@ export default function UserHome() {
           }
         }
 
-        const [locRes, setRes, attRes, shiftRes, annRes, empRes] = await Promise.all([
+        const [locRes, setRes, attRes, shiftRes, annRes, empRes, holRes] = await Promise.all([
           fetch('/api/locations'),
           fetch('/api/settings'),
           fetch('/api/attendance'),
           fetch('/api/shifts'),
           fetch('/api/announcements'),
-          fetch('/api/employees')
+          fetch('/api/employees'),
+          fetch('/api/holidays')
         ]);
         
         if (locRes.ok) {
@@ -208,6 +211,10 @@ export default function UserHome() {
         if (annRes.ok) {
           const data = await annRes.json();
           setAnnouncements(data.filter((a: any) => a.isActive));
+        }
+        if (holRes && holRes.ok) {
+          const data = await holRes.json();
+          setHolidays(data);
         }
         if (attRes.ok) {
           const data = await attRes.json();
@@ -460,15 +467,26 @@ export default function UserHome() {
           const minCheckIn = new Date(upcomingShiftStart.getTime() - beforeMinutes * 60000); 
           const diffMs = minCheckIn.getTime() - now.getTime();
 
-          if (diffMs > 0) {
+          const isSunday = now.getDay() === 0;
+          const todayStr = format(now, "yyyy-MM-dd");
+          const isHoliday = holidays.some((h: any) => format(new Date(h.date), "yyyy-MM-dd") === todayStr);
+
+          if ((isSunday && upcomingShift.isOffSunday) || (isHoliday && upcomingShift.isOffHoliday)) {
+            setIsHolidayOff(true);
             setCanCheckIn(false);
-            const hours = Math.floor(diffMs / (1000 * 60 * 60));
-            const minutes = Math.floor((diffMs % (1000 * 60 * 60)) / (1000 * 60));
-            const seconds = Math.floor((diffMs % (1000 * 60)) / 1000);
-            setCheckInCountdown(`${hours.toString().padStart(2, '0')}:${minutes.toString().padStart(2, '0')}:${seconds.toString().padStart(2, '0')}`);
-          } else {
-            setCanCheckIn(true);
             setCheckInCountdown('');
+          } else {
+            setIsHolidayOff(false);
+            if (diffMs > 0) {
+              setCanCheckIn(false);
+              const hours = Math.floor(diffMs / (1000 * 60 * 60));
+              const minutes = Math.floor((diffMs % (1000 * 60 * 60)) / (1000 * 60));
+              const seconds = Math.floor((diffMs % (1000 * 60)) / 1000);
+              setCheckInCountdown(`${hours.toString().padStart(2, '0')}:${minutes.toString().padStart(2, '0')}:${seconds.toString().padStart(2, '0')}`);
+            } else {
+              setCanCheckIn(true);
+              setCheckInCountdown('');
+            }
           }
         }
       };
@@ -557,7 +575,7 @@ export default function UserHome() {
     }
     
     return () => intervals.forEach(i => clearInterval(i));
-  }, [hasCheckedIn, hasCheckedOut, shiftEndTime, shifts, checkInTime, settings, user, employees, isTambahJaga, selectedFriendNip, replacingFriendNip]);
+  }, [hasCheckedIn, hasCheckedOut, shiftEndTime, shifts, checkInTime, settings, user, employees, isTambahJaga, selectedFriendNip, replacingFriendNip, holidays]);
 
   const fetchLocation = () => {
     setIsLocating(true);
@@ -1133,7 +1151,15 @@ export default function UserHome() {
                   </Alert>
                 )}
 
-                {(!hasCheckedIn || isTambahJaga) && checkInCountdown && !canCheckIn && (
+                {isHolidayOff && (!hasCheckedIn || isTambahJaga) && (
+                  <Alert className="bg-green-50 dark:bg-green-950/50 border-green-200 dark:border-green-900 text-green-800 dark:text-green-400">
+                    <AlertDescription className="text-center font-medium">
+                      Hari ini hari libur. Silahkan manfaatkan hari libur anda dengan istirahat atau berlibur.
+                    </AlertDescription>
+                  </Alert>
+                )}
+
+                {(!hasCheckedIn || isTambahJaga) && checkInCountdown && !canCheckIn && !isHolidayOff && (
                   <Alert className="bg-teal-50 dark:bg-teal-950/50 border-teal-200 dark:border-teal-900 text-teal-700 dark:text-teal-400">
                     <AlertDescription className="text-center">
                       <p className="mb-2">Shift berikutnya: <strong>{nextShift?.name} ({nextShift?.startTime})</strong></p>
@@ -1169,7 +1195,7 @@ export default function UserHome() {
                   disabled={!isInitialDataLoaded || !location || isAbsenting || (isTambahJaga ? (!selectedFriendNip || !isWithinRange || !canCheckIn) : replacingFriendNip ? (!isWithinRange || (hasCheckedIn && !canCheckOut)) : (!hasCheckedIn ? (isWithinRange && !canCheckIn) : (!isWithinRange || !canCheckOut)))}
                   className="w-full bg-teal-600 hover:bg-teal-500 text-white font-bold py-3 rounded-lg shadow-[0_0_10px_rgba(20,184,166,0.5)] transition-all disabled:opacity-50"
                 >
-                  {(!isInitialDataLoaded || isAbsenting) ? 'Memproses...' : (!isWithinRange && !hasCheckedIn && !isTambahJaga && !replacingFriendNip) ? 'Ajukan Izin' : (!isWithinRange) ? 'Di Luar Jangkauan Radius' : (isTambahJaga ? (canCheckIn ? 'Absen Masuk (Ganti Teman)' : 'Belum Waktunya') : replacingFriendNip ? 'Absen Pulang (Ganti Jaga)' : hasCheckedIn ? 'Absen Pulang' : (canCheckIn ? 'Absen Masuk' : 'Belum Waktunya'))}
+                  {(!isInitialDataLoaded || isAbsenting) ? 'Memproses...' : (!isWithinRange && !hasCheckedIn && !isTambahJaga && !replacingFriendNip) ? 'Ajukan Izin' : (!isWithinRange) ? 'Di Luar Jangkauan Radius' : (isTambahJaga ? (isHolidayOff ? 'Hari Libur' : canCheckIn ? 'Absen Masuk (Ganti Teman)' : 'Belum Waktunya') : replacingFriendNip ? 'Absen Pulang (Ganti Jaga)' : hasCheckedIn ? 'Absen Pulang' : (isHolidayOff ? 'Hari Libur' : canCheckIn ? 'Absen Masuk' : 'Belum Waktunya'))}
                 </Button>
 
                 {hasCheckedIn && !canCheckOut && !hasCheckedOut && !isTambahJaga && !replacingFriendNip && settings?.absensiSettings?.enableEarlyCheckout !== false && (
