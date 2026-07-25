@@ -5,7 +5,8 @@ import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Alert, AlertDescription } from '@/components/ui/alert';
 import { MapPin, Camera, CheckCircle2 } from 'lucide-react';
-import { checkAndFireAlarm } from '@/utils/alarm';
+import { checkAndFireAlarm, initBackgroundAudio } from '@/utils/alarm';
+import { createTimerWorker } from '@/utils/timerWorker';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Label } from '@/components/ui/label';
 
@@ -69,7 +70,8 @@ export default function UserHome() {
     const alarmAfterMinutes = parseInt(localStorage.getItem('alarmAfterMinutes') || '15', 10);
     if (!alarmEnabled || shifts.length === 0) return;
 
-    const alarmInterval = setInterval(() => {
+    const worker = createTimerWorker();
+    worker.onmessage = () => {
       const now = getServerTime();
       const activeShifts = resolveActiveShifts(shifts, user, employees);
       let targetShift = activeShifts[0] || shifts[0];
@@ -127,16 +129,30 @@ export default function UserHome() {
         }
       }
 
-      // Check before shift (masuk)
+      // Check before shift (masuk) & late check-in
       if (!hasCheckedIn) {
         const diffBefore = shiftStart.getTime() - now.getTime();
+        const todayDateStr = now.toDateString();
+        
+        // Pengingat sebelum masuk
         if (diffBefore > 0 && diffBefore <= alarmBeforeMinutes * 60000) {
-          const todayDateStr = now.toDateString();
           checkAndFireAlarm(
             'Pengingat Absensi Masuk',
             `Waktu absen masuk untuk shift ${targetShift.name} tinggal ${Math.ceil(diffBefore / 60000)} menit lagi.`,
             `masuk_target_${targetShift.id || targetShift.name}_${todayDateStr}`
           );
+        }
+        
+        // Peringatan Keterlambatan (Late 15 minutes) - if diffBefore is between -15 and -16 mins
+        if (diffBefore <= -15 * 60000 && diffBefore > -20 * 60000) {
+          const day = now.getDay();
+          if (day >= 1 && day <= 5) {
+            checkAndFireAlarm(
+              'Peringatan Keterlambatan',
+              'Anda belum absen masuk dan shift sudah berjalan 15 menit!',
+              `telat_15_${targetShift.id || targetShift.name}_${todayDateStr}`
+            );
+          }
         }
       }
 
@@ -153,16 +169,34 @@ export default function UserHome() {
         }
       }
 
-    }, 30000); // Check every 30 seconds for quick response
+    };
 
-    return () => clearInterval(alarmInterval);
+    worker.postMessage({ command: 'start', interval: 30000 });
+
+    return () => {
+      worker.postMessage({ command: 'stop' });
+      worker.terminate();
+    };
   }, [shifts, user, employees, hasCheckedIn, hasCheckedOut, checkInTime]);
 
   useEffect(() => {
     const userData = JSON.parse(localStorage.getItem('user') || '{}');
     setUser(userData);
     
+    // Add interaction listener to initialize background audio for reliable alarms
+    const handleFirstInteraction = () => {
+      initBackgroundAudio();
+      document.removeEventListener('click', handleFirstInteraction);
+      document.removeEventListener('touchstart', handleFirstInteraction);
+    };
     
+    document.addEventListener('click', handleFirstInteraction);
+    document.addEventListener('touchstart', handleFirstInteraction);
+
+    return () => {
+      document.removeEventListener('click', handleFirstInteraction);
+      document.removeEventListener('touchstart', handleFirstInteraction);
+    };
   }, []);
 
   useEffect(() => {
@@ -223,11 +257,16 @@ export default function UserHome() {
           const currentReplacingNip = localStorage.getItem('replacingFriendNip');
 
           if (currentReplacingNip) {
-            const friendAtt = data.filter((a: any) => a.nip === currentReplacingNip && a.date === today);
-            const friendOut = friendAtt.find((a: any) => a.type === 'out');
-            if (friendOut) {
+            const friendAtt = data.filter((a: any) => a.nip === currentReplacingNip);
+            const friendIn = friendAtt.filter((a: any) => a.type === 'in');
+            const friendOut = friendAtt.filter((a: any) => a.type === 'out');
+            const latestIn = friendIn[friendIn.length - 1];
+            const hasOutForLatestIn = latestIn && friendOut.some((o: any) => o.date === latestIn.date || o.id > latestIn.id);
+
+            if (!latestIn || hasOutForLatestIn) {
               localStorage.removeItem('replacingFriendNip');
               setReplacingFriendNip(null);
+              nipToCheck = userData.nip;
             } else {
               nipToCheck = currentReplacingNip;
             }
@@ -393,7 +432,9 @@ export default function UserHome() {
     if (shifts.length > 0) {
       const isCountdownEnabled = settings?.absensiSettings?.enableCountdown !== false;
       
-      const applyUser = (isTambahJaga && selectedFriendNip) ? employees.find(e => e.nip === selectedFriendNip) : user;
+      const applyUser = (isTambahJaga && selectedFriendNip) 
+        ? employees.find(e => e.nip === selectedFriendNip) 
+        : (replacingFriendNip ? employees.find(e => e.nip === replacingFriendNip) : user);
       const activeShifts = resolveActiveShifts(shifts, applyUser, employees);
       
       const calculateCheckInCountdown = () => {
@@ -438,26 +479,7 @@ export default function UserHome() {
         if (upcomingShift) {
           setNextShift(upcomingShift);
           
-          // Alarm logic
-          const diffMsStart = upcomingShiftStart.getTime() - now.getTime();
-          if (diffMsStart <= 10 * 60000 && diffMsStart > 9 * 60000 && !hasCheckedIn && !isTambahJaga && !replacingFriendNip) {
-            checkAndFireAlarm(
-              'Pengingat Absensi', 
-              'Shift Anda akan mulai dalam 10 menit. Jangan lupa absen masuk!', 
-              'masuk_10'
-            );
-          }
-
-          if (diffMsStart <= -15 * 60000 && diffMsStart > -16 * 60000 && !hasCheckedIn && !isTambahJaga && !replacingFriendNip) {
-            const day = now.getDay();
-            if (day >= 1 && day <= 5) {
-              checkAndFireAlarm(
-                'Peringatan Keterlambatan', 
-                'Anda belum absen masuk dan shift sudah berjalan 15 menit!', 
-                'telat_15'
-              );
-            }
-          }
+          // Alarm logic dipindahkan ke worker timer di useEffect utama
 
           // Izinkan absen masuk mulai X menit sebelum shift dimulai
           const beforeMinutes = parseInt(upcomingShift.checkInBeforeMinutes || '60');
@@ -495,7 +517,10 @@ export default function UserHome() {
     // Timer untuk Absen Pulang (jika sudah absen masuk)
     if (hasCheckedIn && !hasCheckedOut && shiftEndTime) {
       const calculateCountdown = () => {
-        const activeShifts = resolveActiveShifts(shifts, user, employees);
+        const applyUser = (isTambahJaga && selectedFriendNip) 
+          ? employees.find(e => e.nip === selectedFriendNip) 
+          : (replacingFriendNip ? employees.find(e => e.nip === replacingFriendNip) : user);
+        const activeShifts = resolveActiveShifts(shifts, applyUser, employees);
         let targetShift = activeShifts[0] || shifts[0];
         
         if (activeShifts.length > 1 && checkInTime) {
@@ -984,6 +1009,7 @@ export default function UserHome() {
         setSelectedFriendNip('');
       } else if (replacingFriendNip && submitType === 'out') {
         localStorage.removeItem('replacingFriendNip');
+        localStorage.setItem('lastCheckInDate', format(getServerTime(), 'yyyy-MM-dd'));
         setReplacingFriendNip(null);
         nextReplacingNip = null;
       }

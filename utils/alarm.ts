@@ -1,6 +1,33 @@
 import { toast } from 'sonner';
 
 let audioContext: AudioContext | null = null;
+let keepAliveAudio: HTMLAudioElement | null = null;
+
+// Initialize an empty audio element to keep the context alive and potentially prevent deep throttling
+// on mobile devices when tab is in background
+export const initBackgroundAudio = () => {
+  if (keepAliveAudio) return;
+  try {
+    // 1 second of silent base64 mp3
+    const silentMp3 = "data:audio/mp3;base64,SUQzBAAAAAAAI1RTU0UAAAAPAAADTGF2ZjU4Ljc2LjEwMAAAAAAAAAAAAAAA//OEAAAAAAAAAAAAAAAAAAAAAAAASW5mbwAAAA8AAAAEAAABIAD+/v7+/v7+/v7+/v7+/v7+/v7+/v7+/v7+/v7+/v7+/v7+/v7+/v7+/v7+/v7+/v7+/v7+/v7+/v7+AAAAAExhdmM1OC4xMzQAAAAAAAAAAAAAAAAkAMUAAAAAAAAgAQAAAADZ2Q8HAAAAAAAAAAAAAAAAAAAA//MUZAAAAAGkAAAAAAAAA0gAAAAATEFNRTMuMTAwqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqq//MUZBAAAAHkAAAAAAAAA0gAAAAAqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqq//MUZDgAAAHkAAAAAAAAA0gAAAAAqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqq//MUZEgAAAHkAAAAAAAAA0gAAAAAqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqq//MUZFAAAAHkAAAAAAAAA0gAAAAAqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqq";
+    
+    keepAliveAudio = new Audio(silentMp3);
+    keepAliveAudio.loop = true;
+    keepAliveAudio.volume = 0; // silent
+    
+    // Attempt to play it. Will be auto-resumed on any user interaction in the app if it fails.
+    keepAliveAudio.play().catch((e) => {
+      console.warn("Background audio suppressed until user interaction.", e);
+    });
+
+    const AudioContextClass = window.AudioContext || (window as any).webkitAudioContext;
+    if (AudioContextClass && !audioContext) {
+      audioContext = new AudioContextClass();
+    }
+  } catch (e) {
+    console.warn("Background audio init error", e);
+  }
+};
 
 // Play a beautiful synthesized sound using Web Audio API
 export const playAlarmSound = () => {
