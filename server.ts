@@ -11,7 +11,7 @@ const resend = process.env.RESEND_API_KEY ? new Resend(process.env.RESEND_API_KE
 
 async function startServer() {
   const app = express();
-  const PORT = 3000;
+  const PORT = parseInt(process.env.PORT || '3000');
 
   app.use(cors());
   app.use(express.json({ limit: '50mb' }));
@@ -70,7 +70,13 @@ async function startServer() {
   }
   if (process.env.SPREADSHEET_ID && process.env.GOOGLE_SERVICE_ACCOUNT_EMAIL && process.env.GOOGLE_PRIVATE_KEY) {
     try {
-      const privateKey = process.env.GOOGLE_PRIVATE_KEY.replace(/\\n/g, '\n');
+      let privateKey = process.env.GOOGLE_PRIVATE_KEY;
+      privateKey = privateKey.replace(/\\\\n/g, '\n').replace(/\\n/g, '\n');
+      if (!privateKey.includes('\n')) {
+        privateKey = privateKey.replace(/-----BEGIN PRIVATE KEY-----/, '-----BEGIN PRIVATE KEY-----\n')
+          .replace(/-----END PRIVATE KEY-----/, '\n-----END PRIVATE KEY-----\n')
+          .replace(/(.{64})/g, '$1\n');
+      }
       console.log('Attempting to connect to Google Sheets...');
       const serviceAccountAuth = new JWT({
         email: process.env.GOOGLE_SERVICE_ACCOUNT_EMAIL,
@@ -1105,7 +1111,7 @@ async function startServer() {
     if (resend) {
       try {
         await resend.emails.send({
-          from: 'Si Abon Megilan <onboarding@resend.dev>',
+          from: 'Si Abon Megilan <noreplay@siabonmegilan.qzz.io>',
           to: foundUser.email,
           subject: 'Reset Password - Si Abon Megilan',
           html: `<p>Halo ${foundUser.name},</p><p>Klik tautan berikut untuk mereset password Anda:</p><p><a href="${resetLink}">${resetLink}</a></p><p>Tautan ini akan kedaluwarsa dalam 1 jam.</p>`,
@@ -1753,6 +1759,10 @@ async function startServer() {
       }
     }
     res.json({ success: true, message: 'Pengaturan berhasil disimpan' });
+  });
+
+  app.get('/healthz', (req, res) => {
+    res.status(200).json({ status: 'ok' });
   });
 
   // Vite middleware for development
