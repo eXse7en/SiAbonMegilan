@@ -11,6 +11,7 @@ const resend = process.env.RESEND_API_KEY ? new Resend(process.env.RESEND_API_KE
 
 async function startServer() {
   const app = express();
+  if (process.env.K_SERVICE) process.env.PORT = '3000';
   const PORT = parseInt(process.env.PORT || '3000');
 
   app.use(cors());
@@ -922,7 +923,7 @@ async function startServer() {
       const missingOuts = [];
 
       for (const inRec of inRecords) {
-        if (outRecords.some(o => o.nip === inRec.nip && o.date === inRec.date)) continue;
+        if (outRecords.some(o => o.nip === inRec.nip && o.date === inRec.date && o.shift === inRec.shift && o.status === inRec.status)) continue;
 
         // Determine this record's shift
         let targetShift = shifts.find(s => s.name === inRec.shift);

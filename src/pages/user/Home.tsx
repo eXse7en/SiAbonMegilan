@@ -62,6 +62,7 @@ export default function UserHome() {
   const [employees, setEmployees] = useState<any[]>([]);
   const [selectedFriendNip, setSelectedFriendNip] = useState<string>('');
   const [replacingFriendNip, setReplacingFriendNip] = useState<string | null>(localStorage.getItem('replacingFriendNip'));
+  const [gantiJagaCount, setGantiJagaCount] = useState<number>(0);
   const [attendanceData, setAttendanceData] = useState<any[]>([]);
 
   useEffect(() => {
@@ -253,47 +254,70 @@ export default function UserHome() {
           const userData = JSON.parse(localStorage.getItem('user') || '{}');
           const today = format(getServerTime(), 'yyyy-MM-dd');
           
-          let nipToCheck = userData.nip;
           const currentReplacingNip = localStorage.getItem('replacingFriendNip');
-
-          if (currentReplacingNip) {
-            const friendAtt = data.filter((a: any) => a.nip === currentReplacingNip && a.date === today);
-            const friendOut = friendAtt.find((a: any) => a.type === 'out');
-            if (friendOut) {
-              localStorage.removeItem('replacingFriendNip');
-              setReplacingFriendNip(null);
-            } else {
-              nipToCheck = currentReplacingNip;
-            }
-          }
+          const yesterday = format(new Date(getServerTime().getTime() - 86400000), 'yyyy-MM-dd');
 
           const userAttToday = data.filter((a: any) => {
-            if (a.nip !== nipToCheck) return false;
+            if (a.nip !== userData.nip) return false;
             if (a.date === today) return true;
             if (a.location && typeof a.location === 'object' && a.location.endDate) {
               return today >= a.date && today <= a.location.endDate;
             }
             return false;
           });
-          const yesterday = format(new Date(getServerTime().getTime() - 86400000), 'yyyy-MM-dd');
-          const userAttYesterday = data.filter((a: any) => a.nip === nipToCheck && a.date === yesterday);
+          const userAttYesterday = data.filter((a: any) => a.nip === userData.nip && a.date === yesterday);
           
-          let inRecord = userAttToday.find((a: any) => a.type === 'in');
-          let outRecord = userAttToday.find((a: any) => a.type === 'out');
-          const leaveRecord = userAttToday.find((a: any) => ['izin', 'sakit', 'Cuti', 'dinas_luar'].includes(a.type));
+          // Separate Normal and Ganti Jaga records
+          const normalRecords = userAttToday.filter((a: any) => !a.status?.includes('Ganti Jaga'));
+          const gantiJagaRecords = userAttToday.filter((a: any) => a.status?.includes('Ganti Jaga'));
+          const gantiJagaYesterday = userAttYesterday.filter((a: any) => a.status?.includes('Ganti Jaga'));
+          const normalYesterday = userAttYesterday.filter((a: any) => !a.status?.includes('Ganti Jaga'));
           
+          let inRecord = undefined;
+          let outRecord = undefined;
           let checkInDateStr = today;
+          
+          // Determine active session
+          // Priority 1: Active Ganti Jaga
+          let activeGJIn = gantiJagaRecords.find((inRec: any) => inRec.type === 'in' && !gantiJagaRecords.some((outRec: any) => outRec.type === 'out' && outRec.shift === inRec.shift && outRec.status === inRec.status));
+          if (!activeGJIn) {
+            activeGJIn = gantiJagaYesterday.find((inRec: any) => inRec.type === 'in' && !gantiJagaYesterday.some((outRec: any) => outRec.type === 'out' && outRec.shift === inRec.shift && outRec.status === inRec.status) && !gantiJagaRecords.some((outRec: any) => outRec.type === 'out' && outRec.shift === inRec.shift && outRec.status === inRec.status));
+            if (activeGJIn) checkInDateStr = yesterday;
+          }
 
-          // If no 'in' record today, check if yesterday has an 'in' record but NO 'out' record
-          if (!inRecord) {
-            const yesterdayIn = userAttYesterday.find((a: any) => a.type === 'in');
-            const yesterdayOut = userAttYesterday.find((a: any) => a.type === 'out');
-            if (yesterdayIn && !yesterdayOut) {
-               // Possibly user is on a night shift
-               inRecord = yesterdayIn;
-               checkInDateStr = yesterday;
+          if (activeGJIn) {
+            // In a Ganti Jaga session
+            const match = activeGJIn.status.match(/Ganti Jaga - (.+)\)/);
+            const friendNip = match ? match[1] : currentReplacingNip;
+            if (friendNip) {
+               localStorage.setItem('replacingFriendNip', friendNip);
+               setReplacingFriendNip(friendNip);
+            }
+            inRecord = activeGJIn;
+          } else {
+            // Finished Ganti Jaga or never started one
+            if (currentReplacingNip) {
+               localStorage.removeItem('replacingFriendNip');
+               setReplacingFriendNip(null);
+            }
+            checkInDateStr = today;
+            // Fall back to Normal session
+            inRecord = normalRecords.find((a: any) => a.type === 'in');
+            outRecord = normalRecords.find((a: any) => a.type === 'out');
+            if (!inRecord) {
+              const yIn = normalYesterday.find((a: any) => a.type === 'in');
+              const yOut = normalYesterday.find((a: any) => a.type === 'out');
+              if (yIn && !yOut && normalRecords.filter((a: any) => a.type === 'out').length === 0) {
+                 inRecord = yIn;
+                 checkInDateStr = yesterday;
+              }
             }
           }
+          
+          const leaveRecord = normalRecords.find((a: any) => ['izin', 'sakit', 'Cuti', 'dinas_luar'].includes(a.type));
+          
+          const completedGJ = gantiJagaRecords.filter((a: any) => a.type === 'out').length;
+          setGantiJagaCount(completedGJ);
           
           // Store the checkin date so we know if it was yesterday
           localStorage.setItem('lastCheckInDate', checkInDateStr);
@@ -916,16 +940,13 @@ export default function UserHome() {
     if (isTambahJaga && selectedFriendNip) {
       const friend = employees.find(e => e.nip === selectedFriendNip);
       if (friend) {
-        submitNip = friend.nip;
-        submitName = friend.name;
-        // User checking in for friend
+        // Keep user.nip for the actual user to get the record!
         submitType = 'in';
       }
     } else if (replacingFriendNip) {
       const friend = employees.find(e => e.nip === replacingFriendNip);
       if (friend) {
-        submitNip = friend.nip;
-        submitName = friend.name;
+        // Keep user.nip for the actual user to get the record!
         submitType = 'out';
       }
     }
@@ -978,7 +999,7 @@ export default function UserHome() {
           time: getServerTime().toLocaleTimeString('id-ID', { hour: '2-digit', minute: '2-digit' }),
           type: submitType,
           location: { lat: location.lat, lng: location.lng, address: address },
-          status: (isTambahJaga || replacingFriendNip) ? 'Hadir (Ganti Jaga)' : (isEarlyCheckout ? 'Hadir (Pulang Cepat)' : 'Hadir'),
+          status: (isTambahJaga || replacingFriendNip) ? `Hadir (Ganti Jaga - ${(isTambahJaga ? selectedFriendNip : replacingFriendNip)})` : (isEarlyCheckout ? 'Hadir (Pulang Cepat)' : 'Hadir'),
           photoUrl: compressedImageSrc,
           shift: nextShift?.name || 'Reguler'
         }),
@@ -1097,7 +1118,7 @@ export default function UserHome() {
                     Anda telah menyelesaikan absensi untuk hari ini.
                   </AlertDescription>
                 </Alert>
-                {!replacingFriendNip && (
+                {!replacingFriendNip && gantiJagaCount < 2 && (
                   <Button onClick={() => setIsTambahJaga(true)} className="w-full mt-4 border-teal-500 text-teal-700 dark:text-teal-400 hover:bg-teal-50 dark:hover:bg-teal-900/30" variant="outline">Tambah Jaga (Gantikan Teman)</Button>
                 )}
               </>
@@ -1225,7 +1246,7 @@ export default function UserHome() {
                   </Button>
                 )}
                 
-                {!isTambahJaga && !hasCheckedIn && !replacingFriendNip && (
+                {!isTambahJaga && !hasCheckedIn && !replacingFriendNip && gantiJagaCount < 2 && (
                   <Button onClick={() => setIsTambahJaga(true)} className="w-full mt-4 border-teal-500 text-teal-700 dark:text-teal-400 hover:bg-teal-50 dark:hover:bg-teal-900/30" variant="outline">
                     Tambah Jaga (Gantikan Teman)
                   </Button>
