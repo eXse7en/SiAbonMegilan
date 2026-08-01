@@ -15,57 +15,6 @@ import ExcelJS from 'exceljs';
 import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer, AreaChart, Area, BarChart, Bar, LabelList } from 'recharts';
 import { format } from 'date-fns';
 
-export interface GeneralSettings {
-  companyName?: string;
-  headName?: string;
-  pimpinanName?: string;
-  email?: string;
-  address?: string;
-  mainLocation?: string;
-}
-
-export interface AbsensiSettings {
-  tolerance?: string;
-  enableCountdown?: boolean;
-  enableEarlyCheckout?: boolean;
-}
-
-export interface Employee {
-  id?: string;
-  nip: string;
-  name: string;
-  unit?: string;
-  office?: string;
-  office2?: string;
-}
-
-export interface Shift {
-  id?: string;
-  name: string;
-  startTime?: string;
-  endTime?: string;
-  isActive?: boolean;
-}
-
-export interface AttendanceRecord {
-  id: string;
-  nip: string;
-  name: string;
-  date: string;
-  time?: string;
-  type: string;
-  status: string;
-  shift?: string;
-  location?: unknown;
-  photoUrl?: string;
-}
-
-export interface ProcessedSession {
-  inRecord: AttendanceRecord | null;
-  outRecord: AttendanceRecord | null;
-  leaveRecord: AttendanceRecord | null;
-}
-
 export default function AdminAttendance() {
   const [searchParams, setSearchParams] = useSearchParams();
   const currentTab = searchParams.get("tab") || "harian";
@@ -74,13 +23,13 @@ export default function AdminAttendance() {
     setSearchParams({ tab: value });
   };
 
-  const [generalSettings, setGeneralSettings] = useState<GeneralSettings>({});
+  const [generalSettings, setGeneralSettings] = useState<any>({});
   const puskesmasName = generalSettings.companyName || "Puskesmas Sehat";
-  const pimpinanName = generalSettings.headName || "Dr. Budi Santoso";
+  const pimpinanName = generalSettings.pimpinanName || "Dr. Budi Santoso";
 
-  const [absensiSettings, setAbsensiSettings] = useState<AbsensiSettings>({});
-  const [shifts, setShifts] = useState<Shift[]>([]);
-  const [employees, setEmployees] = useState<Employee[]>([]);
+  const [absensiSettings, setAbsensiSettings] = useState<any>({});
+  const [shifts, setShifts] = useState<any[]>([]);
+  const [employees, setEmployees] = useState<any[]>([]);
 
   useEffect(() => {
     const fetchEmployees = async () => {
@@ -89,12 +38,9 @@ export default function AdminAttendance() {
         if (response.ok) {
           const data = await response.json();
           setEmployees(data);
-        } else {
-          toast.error('Gagal mengambil data karyawan');
         }
       } catch (error) {
         console.error('Failed to fetch employees:', error);
-        toast.error('Terjadi kesalahan jaringan saat mengambil data karyawan');
       }
     };
     fetchEmployees();
@@ -111,18 +57,13 @@ export default function AdminAttendance() {
           const data = await setRes.json();
           if (data.generalSettings) setGeneralSettings(data.generalSettings);
           if (data.absensiSettings) setAbsensiSettings(data.absensiSettings);
-        } else {
-           toast.error('Gagal mengambil data pengaturan');
         }
         if (shiftRes.ok) {
           const shiftData = await shiftRes.json();
           setShifts(shiftData);
-        } else {
-           toast.error('Gagal mengambil data shift');
         }
       } catch (error) {
         console.error('Failed to fetch:', error);
-        toast.error('Terjadi kesalahan jaringan saat mengambil data pengaturan/shift');
       }
     };
     fetchData();
@@ -150,7 +91,7 @@ export default function AdminAttendance() {
 
   const dates = getDatesInRange(startDate, endDate);
 
-  const [attendanceData, setAttendanceData] = useState<AttendanceRecord[]>([]);
+  const [attendanceData, setAttendanceData] = useState<any[]>([]);
 
   const fetchAttendance = async () => {
     try {
@@ -168,13 +109,10 @@ export default function AdminAttendance() {
       if (response.ok) {
         const data = await response.json();
         setAttendanceData(data);
-      } else {
-        toast.error('Gagal mengambil data absensi');
       }
     } catch (error) {
       if (error instanceof TypeError && error.message.includes('fetch')) return;
       console.error('Failed to fetch attendance:', error);
-      toast.error('Terjadi kesalahan jaringan saat mengambil data absensi');
     }
   };
 
@@ -249,19 +187,19 @@ export default function AdminAttendance() {
       return dateA.getTime() - dateB.getTime();
   });
 
-  const processedHarianRaw: ProcessedSession[] = [];
+  const processedHarianRaw: any[] = [];
   
   // Group by NIP first to process each person's timeline
-  const nipGroups = sortedRecords.reduce((acc: Record<string, AttendanceRecord[]>, curr: AttendanceRecord) => {
+  const nipGroups = sortedRecords.reduce((acc: any, curr: any) => {
       if (!acc[curr.nip]) acc[curr.nip] = [];
       acc[curr.nip].push(curr);
       return acc;
   }, {});
 
-  Object.values(nipGroups).forEach((records: AttendanceRecord[]) => {
-      let currentSession: ProcessedSession | null = null;
+  Object.values(nipGroups).forEach((records: any) => {
+      let currentSession: any = null;
       
-      records.forEach((record: AttendanceRecord) => {
+      records.forEach((record: any) => {
           const isLeave = ['izin', 'sakit', 'Cuti', 'dinas_luar', 'pending'].includes(record.type) || ['izin', 'Sakit', 'Cuti', 'Dinas Luar', 'pending'].includes(record.status);
           
           if (isLeave) {
@@ -299,13 +237,13 @@ export default function AdminAttendance() {
       }
   });
 
-  const processedHarian = processedHarianRaw.map((session: ProcessedSession) => {
+  const processedHarian = processedHarianRaw.map((session: any) => {
     const { inRecord, outRecord, leaveRecord } = session;
     const baseRecord = inRecord || outRecord || leaveRecord;
     if (!baseRecord) return null;
     
     const isIzin = ['izin', 'Sakit', 'Cuti', 'Dinas Luar', 'pending'].includes(baseRecord.status);
-    const locationVal = typeof baseRecord.location === 'object' && baseRecord.location !== null ? (baseRecord.location as { reason?: string; address?: string }).reason || (baseRecord.location as { reason?: string; address?: string }).address || JSON.stringify(baseRecord.location) : (baseRecord.location as string);
+    const locationVal = typeof baseRecord.location === 'object' && baseRecord.location !== null ? baseRecord.location.reason || baseRecord.location.address || JSON.stringify(baseRecord.location) : baseRecord.location;
     
     let shiftDisplay = baseRecord.shift || "-";
     if (inRecord && inRecord.time && inRecord.time !== "-") {
@@ -345,16 +283,16 @@ export default function AdminAttendance() {
 
   // Process attendance data for Bulanan
 
-  const isDateInLeaveRange = (leaveRecord: AttendanceRecord | null, checkDateStr: string) => {
+  const isDateInLeaveRange = (leaveRecord: any, checkDateStr: string) => {
     if (!leaveRecord || (leaveRecord.type !== 'izin' && leaveRecord.type !== 'sakit' && leaveRecord.type !== 'Cuti' && leaveRecord.type !== 'dinas_luar' && leaveRecord.type !== 'pending' && !['izin', 'Sakit', 'Cuti', 'Dinas Luar', 'pending'].includes(leaveRecord.status))) return false;
     
     const startDate = leaveRecord.date;
-    const endDate = (leaveRecord.location as { endDate?: string })?.endDate || startDate;
+    const endDate = leaveRecord.location?.endDate || startDate;
     
     return checkDateStr >= startDate && checkDateStr <= endDate;
   };
 
-  const getLeaveDayNumber = (leaveRecord: AttendanceRecord, checkDateStr: string) => {
+  const getLeaveDayNumber = (leaveRecord: any, checkDateStr: string) => {
     const startObj = new Date(leaveRecord.date);
     const checkObj = new Date(checkDateStr);
     const diffTime = Math.abs(checkObj.getTime() - startObj.getTime());
@@ -364,7 +302,7 @@ export default function AdminAttendance() {
 
   const bulananData = employees.map(emp => {
     const empAttendance = attendanceData.filter(a => a.nip === emp.nip);
-    const attendanceMap: Record<string, { code: string; label?: string; hours: number; color?: string; bgColor?: string; onlyIn?: boolean } | string> = {};
+    const attendanceMap: any = {};
     let totalHoursCount = 0;
 
     dates.forEach(date => {
@@ -691,13 +629,10 @@ export default function AdminAttendance() {
         const response = await fetch('/api/holidays');
         if (response.ok) {
           const data = await response.json();
-          setHolidays(data.sort((a: { date: string }, b: { date: string }) => new Date(a.date).getTime() - new Date(b.date).getTime()));
-        } else {
-          toast.error('Gagal mengambil data hari libur');
+          setHolidays(data.sort((a: any, b: any) => new Date(a.date).getTime() - new Date(b.date).getTime()));
         }
       } catch (error) {
         console.error('Failed to fetch holidays:', error);
-        toast.error('Terjadi kesalahan jaringan saat mengambil data hari libur');
       }
     };
     fetchHolidays();
@@ -721,7 +656,7 @@ export default function AdminAttendance() {
           const refreshRes = await fetch('/api/holidays');
           if (refreshRes.ok) {
               const data = await refreshRes.json();
-              setHolidays(data.sort((a: { date: string }, b: { date: string }) => new Date(a.date).getTime() - new Date(b.date).getTime()));
+              setHolidays(data.sort((a: any, b: any) => new Date(a.date).getTime() - new Date(b.date).getTime()));
           }
           setNewHolidayDate("");
           setNewHolidayName("");
@@ -955,7 +890,7 @@ export default function AdminAttendance() {
         if (typeof attInfo === 'string') {
            rowData.push(attInfo || '-');
         } else if (attInfo) {
-           rowData.push((attInfo as { code: string }).code || '-');
+           rowData.push((attInfo as any).code || '-');
         } else {
            rowData.push('-');
         }

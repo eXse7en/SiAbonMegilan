@@ -686,203 +686,9 @@ async function startServer() {
     res.json({ timestamp: Date.now() });
   });
 
-  // Auto Check-Out Helper Function
-  async function runAutoCheckout() {
-    let fixedCount = 0;
-    try {
-      let attendanceList: any[] = [];
-      let employeeList: any[] = [];
-      let shiftList: any[] = [];
-      let attSheet: any = null;
-
-      if (doc) {
-        attSheet = await getOrCreateSheet('Attendance', ['id', 'nip', 'name', 'date', 'time', 'type', 'location', 'status', 'photoUrl', 'shift']);
-        const empSheet = await getOrCreateSheet('Employees', ['id', 'name', 'nip', 'office', 'office2', 'email', 'gender', 'cluster', 'unit', 'password', 'photoUrl', 'photoUploadCount']);
-        const shiftSheet = await getOrCreateSheet('Shifts', ['id', 'name', 'startTime', 'endTime', 'fridayEndTime', 'saturdayEndTime', 'checkInBeforeMinutes', 'checkInAfterMinutes', 'checkOutBeforeMinutes', 'checkOutAfterMinutes', 'crossesMidnight', 'isActive', 'unit', 'isOffSunday', 'isOffHoliday']);
-
-        if (attSheet && empSheet && shiftSheet) {
-          const [attRows, empRows, shiftRows] = await Promise.all([
-            attSheet.getRows(),
-            empSheet.getRows(),
-            shiftSheet.getRows()
-          ]);
-
-          attendanceList = attRows.map(r => ({
-            nip: r.get('nip'),
-            name: r.get('name'),
-            date: r.get('date'),
-            time: r.get('time'),
-            type: r.get('type'),
-            location: r.get('location'),
-            status: r.get('status'),
-            shift: r.get('shift') || ''
-          }));
-
-          employeeList = empRows.map(r => ({ nip: r.get('nip'), unit: r.get('unit') }));
-          shiftList = shiftRows.map(r => ({
-            name: r.get('name'),
-            startTime: r.get('startTime'),
-            endTime: r.get('endTime'),
-            fridayEndTime: r.get('fridayEndTime') || '',
-            saturdayEndTime: r.get('saturdayEndTime') || '',
-            checkOutAfterMinutes: parseInt(r.get('checkOutAfterMinutes') || '120', 10),
-            crossesMidnight: String(r.get('crossesMidnight')).toLowerCase() === 'true',
-            isActive: String(r.get('isActive')).toLowerCase() === 'true',
-            unit: r.get('unit') || ''
-          }));
-        }
-      } else {
-        attendanceList = db.attendance;
-        employeeList = db.employees;
-        shiftList = [
-          { name: 'Pagi', startTime: '07:00', endTime: '14:00', checkOutAfterMinutes: 120, crossesMidnight: false, isActive: true },
-          { name: 'Sore', startTime: '14:00', endTime: '21:00', checkOutAfterMinutes: 120, crossesMidnight: false, isActive: true },
-          { name: 'Malam', startTime: '21:00', endTime: '07:00', checkOutAfterMinutes: 120, crossesMidnight: true, isActive: true },
-        ];
-      }
-
-      if (attendanceList.length === 0) return 0;
-
-      const inRecords = attendanceList.filter(a => a.type === 'in');
-      const outRecords = attendanceList.filter(a => a.type === 'out');
-      const now = new Date();
-
-      const getJakartaDateStr = (d: Date) => {
-        const dateFormatter = new Intl.DateTimeFormat('en-US', { timeZone: 'Asia/Jakarta', year: 'numeric', month: '2-digit', day: '2-digit' });
-        const parts = dateFormatter.formatToParts(d);
-        const year = parts.find(p => p.type === 'year')?.value;
-        const month = parts.find(p => p.type === 'month')?.value;
-        const day = parts.find(p => p.type === 'day')?.value;
-        return `${year}-${month}-${day}`;
-      };
-
-      const todayStr = getJakartaDateStr(now);
-      const missingOuts: any[] = [];
-
-      for (const inRec of inRecords) {
-        if (!inRec.nip || !inRec.date) continue;
-
-        // Check if there is already an 'out' record matching this NIP and date
-        if (outRecords.some(o => o.nip === inRec.nip && o.date === inRec.date)) continue;
-
-        // Find matching shift
-        let targetShift = shiftList.find(s => s.name && inRec.shift && s.name.trim().toLowerCase() === inRec.shift.trim().toLowerCase());
-        
-        if (!targetShift && inRec.time) {
-          const timeMatch = String(inRec.time).match(/(\d+)[.:](\d+)/);
-          if (timeMatch) {
-            let inHr = parseInt(timeMatch[1], 10);
-            let inMin = parseInt(timeMatch[2], 10);
-            const lowerTime = String(inRec.time).toLowerCase();
-            if (lowerTime.includes('pm') && inHr < 12) inHr += 12;
-            else if (lowerTime.includes('am') && inHr === 12) inHr = 0;
-            
-            const inMinutes = inHr * 60 + inMin;
-            let minDiff = Infinity;
-
-            shiftList.filter(s => s.isActive !== false).forEach(s => {
-              if (!s.startTime) return;
-              const [sHr, sMin] = s.startTime.split(':').map(Number);
-              let diff = Math.abs(inMinutes - (sHr * 60 + sMin));
-              if (diff > 720) diff = 1440 - diff;
-              if (diff < minDiff) {
-                minDiff = diff;
-                targetShift = s;
-              }
-            });
-          }
-        }
-
-        if (!targetShift) {
-          const empUnit = employeeList.find(e => e.nip === inRec.nip)?.unit || '';
-          const activeShifts = shiftList.filter(s => s.isActive !== false);
-          targetShift = activeShifts.find(s => s.unit && s.unit === empUnit) || activeShifts[0] || {
-            name: inRec.shift || 'Pagi',
-            startTime: '07:00',
-            endTime: '14:00',
-            checkOutAfterMinutes: 120,
-            crossesMidnight: false
-          };
-        }
-
-        const recDateObj = new Date(inRec.date + 'T00:00:00');
-        const isFriday = recDateObj.getDay() === 5;
-        const isSaturday = recDateObj.getDay() === 6;
-
-        let endTimeStr = targetShift.endTime;
-        if (isFriday && targetShift.fridayEndTime) endTimeStr = targetShift.fridayEndTime;
-        if (isSaturday && targetShift.saturdayEndTime) endTimeStr = targetShift.saturdayEndTime;
-
-        if (!endTimeStr) {
-          const lowerName = (targetShift.name || inRec.shift || '').toLowerCase();
-          if (lowerName.includes('pagi')) endTimeStr = '14:00';
-          else if (lowerName.includes('sore')) endTimeStr = '21:00';
-          else if (lowerName.includes('malam')) endTimeStr = '07:00';
-          else endTimeStr = '16:00';
-        }
-
-        const [endHr, endMin] = endTimeStr.split(':').map(Number);
-        const endDateTime = new Date(inRec.date + 'T00:00:00');
-        endDateTime.setHours(endHr, endMin, 0, 0);
-
-        const isCrossesMidnight = targetShift.crossesMidnight || (targetShift.startTime && parseInt(targetShift.startTime.split(':')[0], 10) > endHr);
-        if (isCrossesMidnight) {
-          endDateTime.setDate(endDateTime.getDate() + 1);
-        }
-
-        const checkOutAfterMinutes = targetShift.checkOutAfterMinutes || 120;
-        endDateTime.setMinutes(endDateTime.getMinutes() + checkOutAfterMinutes);
-
-        const isPastDate = inRec.date < todayStr && (!isCrossesMidnight || inRec.date < getJakartaDateStr(new Date(now.getTime() - 86400000)));
-
-        if (now > endDateTime || isPastDate) {
-          // Auto checkout time: shift end time minus 1 hour
-          const autoCheckoutHour = (endHr - 1 + 24) % 24;
-          const autoCheckoutTimeStr = `${autoCheckoutHour.toString().padStart(2, '0')}:${endMin.toString().padStart(2, '0')}`;
-
-          const statusToSave = inRec.status || 'Hadir';
-
-          missingOuts.push({
-            id: (Date.now() + missingOuts.length).toString(),
-            nip: inRec.nip,
-            name: inRec.name,
-            date: inRec.date,
-            time: autoCheckoutTimeStr,
-            type: 'out',
-            location: inRec.location,
-            status: statusToSave,
-            photoUrl: '',
-            shift: targetShift.name || inRec.shift || 'Reguler'
-          });
-        }
-      }
-
-      if (missingOuts.length > 0) {
-        if (doc && attSheet) {
-          const rowsToAdd = missingOuts.map(rec => ({
-            ...rec,
-            location: typeof rec.location === 'object' ? JSON.stringify(rec.location) : rec.location
-          }));
-          await attSheet.addRows(rowsToAdd);
-          delete cache['attendance'];
-        } else {
-          missingOuts.forEach(rec => db.attendance.push(rec));
-        }
-        fixedCount = missingOuts.length;
-        console.log(`[Auto-Checkout] Recorded ${fixedCount} auto check-outs at shift end minus 1 hour.`);
-      }
-    } catch (error) {
-      console.error('Error during auto-checkout:', error);
-    }
-    return fixedCount;
-  }
-
   app.get('/api/attendance', async (req, res) => {
     const { startDate, endDate } = req.query;
     
-    // Trigger auto-checkout check before retrieving records
-    await runAutoCheckout();
-
     let allAttendance: any[] = [];
     if (doc) {
       try {
@@ -1062,11 +868,114 @@ async function startServer() {
   });
 
   app.post('/api/attendance/auto-checkout-check', async (req, res) => {
+    if (!doc) return res.json({ success: true, fixedCount: 0 });
+
     try {
-      const fixedCount = await runAutoCheckout();
-      return res.json({ success: true, fixedCount });
+      // Get necessary data
+      const [attSheet, empSheet, shiftSheet] = await Promise.all([
+        getOrCreateSheet('Attendance', ['id', 'nip', 'name', 'date', 'time', 'type', 'location', 'status', 'photoUrl', 'shift']),
+        getOrCreateSheet('Employees', ['id', 'name', 'nip', 'office', 'office2', 'email', 'gender', 'cluster', 'unit', 'password', 'photoUrl', 'photoUploadCount']),
+        getOrCreateSheet('Shifts', ['id', 'name', 'startTime', 'endTime', 'fridayEndTime', 'saturdayEndTime', 'checkInBeforeMinutes', 'checkInAfterMinutes', 'checkOutBeforeMinutes', 'checkOutAfterMinutes', 'crossesMidnight', 'isActive', 'unit', 'isOffSunday', 'isOffHoliday'])
+      ]);
+
+      if (!attSheet || !empSheet || !shiftSheet) return res.json({ success: false });
+
+      const [attRows, empRows, shiftRows] = await Promise.all([
+        attSheet.getRows(),
+        empSheet.getRows(),
+        shiftSheet.getRows()
+      ]);
+
+      const attendance = attRows.map(r => ({
+        nip: r.get('nip'), name: r.get('name'), date: r.get('date'),
+        time: r.get('time'), type: r.get('type'), location: r.get('location'),
+        status: r.get('status'), shift: r.get('shift') || ''
+      }));
+
+      const employees = empRows.map(r => ({ nip: r.get('nip'), unit: r.get('unit') }));
+      const shifts = shiftRows.map(r => ({
+        name: r.get('name'), startTime: r.get('startTime'), endTime: r.get('endTime'),
+        fridayEndTime: r.get('fridayEndTime') || '', saturdayEndTime: r.get('saturdayEndTime') || '',
+        checkOutAfterMinutes: parseInt(r.get('checkOutAfterMinutes') || '120'),
+        crossesMidnight: String(r.get('crossesMidnight')).toLowerCase() === 'true',
+        isActive: String(r.get('isActive')).toLowerCase() === 'true',
+        unit: r.get('unit') || ''
+      }));
+
+      // Find 'in' records without 'out' records
+      const inRecords = attendance.filter(a => a.type === 'in');
+      const outRecords = attendance.filter(a => a.type === 'out');
+      const now = new Date();
+      
+      const missingOuts = [];
+
+      for (const inRec of inRecords) {
+        if (outRecords.some(o => o.nip === inRec.nip && o.date === inRec.date)) continue;
+
+        // Determine this record's shift
+        let targetShift = shifts.find(s => s.name === inRec.shift);
+        if (!targetShift) {
+          const empUnit = employees.find(e => e.nip === inRec.nip)?.unit || '';
+          const activeShifts = shifts.filter(s => s.isActive);
+          const specificShifts = activeShifts.filter(s => s.unit && s.unit === empUnit);
+          // Simplified fallback: pick first matching shift or first overall
+          targetShift = specificShifts[0] || activeShifts.filter(s => !s.unit || s.unit === 'none' || s.unit === '')[0] || shifts[0];
+        }
+
+        if (!targetShift) continue;
+
+        // Determine correct end time based on day of week
+        const recDateObj = new Date(inRec.date);
+        const isFriday = recDateObj.getDay() === 5;
+        const isSaturday = recDateObj.getDay() === 6;
+        let endTimeStr = targetShift.endTime;
+        if (isFriday && targetShift.fridayEndTime) endTimeStr = targetShift.fridayEndTime;
+        if (isSaturday && targetShift.saturdayEndTime) endTimeStr = targetShift.saturdayEndTime;
+
+        if (!endTimeStr) continue;
+
+        // Construct absolute end time limit
+        const [endHr, endMin] = endTimeStr.split(':').map(Number);
+        const endDateTime = new Date(inRec.date);
+        endDateTime.setHours(endHr, endMin, 0, 0);
+
+        if (targetShift.crossesMidnight) {
+          endDateTime.setDate(endDateTime.getDate() + 1);
+        }
+
+        // Add tolerance
+        endDateTime.setMinutes(endDateTime.getMinutes() + targetShift.checkOutAfterMinutes);
+
+        // If 'now' is past the maximum allowed checkout time, auto-checkout
+        if (now > endDateTime) {
+          const autoCheckoutHour = (endHr - 1 + 24) % 24;
+          const autoCheckoutTimeStr = `${autoCheckoutHour.toString().padStart(2, '0')}:${endMin.toString().padStart(2, '0')}`;
+
+          missingOuts.push({
+            id: (Date.now() + missingOuts.length).toString(),
+            nip: inRec.nip,
+            name: inRec.name,
+            date: inRec.date,
+            time: autoCheckoutTimeStr,
+            type: 'out',
+            location: inRec.location,
+            status: 'Hadir (Pulang Cepat)',
+            photoUrl: '', // Auto checkout has no photo
+            shift: targetShift.name
+          });
+        }
+      }
+
+      if (missingOuts.length > 0) {
+        await attSheet.addRows(missingOuts);
+        delete cache['attendance'];
+        return res.json({ success: true, fixedCount: missingOuts.length });
+      }
+
+      return res.json({ success: true, fixedCount: 0 });
+
     } catch (error) {
-      console.error('Error in /api/attendance/auto-checkout-check:', error);
+      console.error('Error auto-checkout:', error);
       return res.status(500).json({ success: false, message: 'Gagal auto-checkout' });
     }
   });

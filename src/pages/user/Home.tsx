@@ -257,16 +257,11 @@ export default function UserHome() {
           const currentReplacingNip = localStorage.getItem('replacingFriendNip');
 
           if (currentReplacingNip) {
-            const friendAtt = data.filter((a: any) => a.nip === currentReplacingNip);
-            const friendIn = friendAtt.filter((a: any) => a.type === 'in');
-            const friendOut = friendAtt.filter((a: any) => a.type === 'out');
-            const latestIn = friendIn[friendIn.length - 1];
-            const hasOutForLatestIn = latestIn && friendOut.some((o: any) => o.date === latestIn.date || o.id > latestIn.id);
-
-            if (!latestIn || hasOutForLatestIn) {
+            const friendAtt = data.filter((a: any) => a.nip === currentReplacingNip && a.date === today);
+            const friendOut = friendAtt.find((a: any) => a.type === 'out');
+            if (friendOut) {
               localStorage.removeItem('replacingFriendNip');
               setReplacingFriendNip(null);
-              nipToCheck = userData.nip;
             } else {
               nipToCheck = currentReplacingNip;
             }
@@ -432,9 +427,7 @@ export default function UserHome() {
     if (shifts.length > 0) {
       const isCountdownEnabled = settings?.absensiSettings?.enableCountdown !== false;
       
-      const applyUser = (isTambahJaga && selectedFriendNip) 
-        ? employees.find(e => e.nip === selectedFriendNip) 
-        : (replacingFriendNip ? employees.find(e => e.nip === replacingFriendNip) : user);
+      const applyUser = (isTambahJaga && selectedFriendNip) ? employees.find(e => e.nip === selectedFriendNip) : user;
       const activeShifts = resolveActiveShifts(shifts, applyUser, employees);
       
       const calculateCheckInCountdown = () => {
@@ -517,10 +510,7 @@ export default function UserHome() {
     // Timer untuk Absen Pulang (jika sudah absen masuk)
     if (hasCheckedIn && !hasCheckedOut && shiftEndTime) {
       const calculateCountdown = () => {
-        const applyUser = (isTambahJaga && selectedFriendNip) 
-          ? employees.find(e => e.nip === selectedFriendNip) 
-          : (replacingFriendNip ? employees.find(e => e.nip === replacingFriendNip) : user);
-        const activeShifts = resolveActiveShifts(shifts, applyUser, employees);
+        const activeShifts = resolveActiveShifts(shifts, user, employees);
         let targetShift = activeShifts[0] || shifts[0];
         
         if (activeShifts.length > 1 && checkInTime) {
@@ -1009,7 +999,6 @@ export default function UserHome() {
         setSelectedFriendNip('');
       } else if (replacingFriendNip && submitType === 'out') {
         localStorage.removeItem('replacingFriendNip');
-        localStorage.setItem('lastCheckInDate', format(getServerTime(), 'yyyy-MM-dd'));
         setReplacingFriendNip(null);
         nextReplacingNip = null;
       }
