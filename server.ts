@@ -141,8 +141,14 @@ async function startServer() {
         let headersChanged = false;
         const newHeaders = [...currentHeaders];
         for (const header of headerValues) {
-          if (!newHeaders.includes(header)) {
+          const lowerExpected = header.toLowerCase().trim();
+          const existingIndex = newHeaders.findIndex(h => (h || '').toLowerCase().trim() === lowerExpected);
+          
+          if (existingIndex === -1) {
             newHeaders.push(header);
+            headersChanged = true;
+          } else if (newHeaders[existingIndex] !== header) {
+            newHeaders[existingIndex] = header;
             headersChanged = true;
           }
         }
