@@ -7,7 +7,9 @@ export async function syncServerTime(): Promise<boolean> {
     const start = performance.now();
     const res = await fetch('/api/time');
     if (res.ok) {
-      const data = await res.json();
+      const contentType = res.headers.get('content-type');
+      if (contentType && contentType.includes('application/json')) {
+        const data = await res.json();
       const end = performance.now();
       const roundtripDelay = (end - start) / 2;
       
@@ -17,6 +19,7 @@ export async function syncServerTime(): Promise<boolean> {
       
       console.log('Server time synced securely. Diff:', serverTimeAtSync - Date.now());
       return true;
+      }
     }
   } catch (err) {
     console.error('Failed to sync server time', err);
