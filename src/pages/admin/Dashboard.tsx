@@ -1,8 +1,10 @@
 import { getServerTime } from '@/lib/time';
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { Users, UserCheck, Clock, UserX } from "lucide-react";
+import { Users, UserCheck, Clock, UserX, FileText } from "lucide-react";
 import { useState, useEffect } from "react";
 import { Button } from "@/components/ui/button";
+import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import { toast } from "sonner";
 
 import { format } from 'date-fns';
 
@@ -35,11 +37,14 @@ export default function AdminDashboard() {
 
   const [pendingLeaves, setPendingLeaves] = useState<any[]>([]);
   const [notCheckedOut, setNotCheckedOut] = useState<any[]>([]);
+  const [previewAttachment, setPreviewAttachment] = useState<{ url: string; title: string } | null>(null);
 
-  const handleApprove = async (id: string, type: string, action: 'approve' | 'reject') => {
+  const handleApprove = async (id: string, type: string, action: 'approve' | 'reject', currentStatus?: string) => {
     let finalStatus = 'Hadir';
     if (action === 'reject') {
       finalStatus = 'Ditolak';
+    } else if (currentStatus === 'pending_telat' || type === 'in') {
+      finalStatus = 'Hadir (Telat)';
     } else {
       if (type === 'izin') finalStatus = 'izin';
       else if (type === 'sakit') finalStatus = 'Sakit';
@@ -55,9 +60,13 @@ export default function AdminDashboard() {
       });
       if (res.ok) {
         setPendingLeaves(prev => prev.filter(l => l.id !== id));
+        toast.success(action === 'approve' ? 'Permintaan disetujui' : 'Permintaan ditolak');
+      } else {
+        toast.error('Gagal memperbarui status persetujuan');
       }
     } catch (e) {
       console.error('Error updating leave status', e);
+      toast.error('Terjadi kesalahan jaringan');
     }
   };
 
@@ -147,10 +156,15 @@ export default function AdminDashboard() {
             endTimeStr = bestShift.saturdayEndTime;
           }
 
+          const globalTol = absensiSettings?.tolerance;
+          const parsedTol = (globalTol !== undefined && globalTol !== '' && !isNaN(Number(globalTol)))
+            ? parseInt(String(globalTol), 10)
+            : parseInt(String(bestShift.checkInAfterMinutes ?? '15'), 10);
+
           return {
             start: parseTime(bestShift.startTime),
             end: parseTime(endTimeStr),
-            tolerance: parseInt(bestShift.checkInAfterMinutes || absensiSettings.tolerance || '15')
+            tolerance: isNaN(parsedTol) ? 15 : parsedTol
           };
         };
 
@@ -162,9 +176,10 @@ export default function AdminDashboard() {
           }
           return false;
         });
-        const presentToday = todayAttendance.filter((a: any) => a.type === 'in');
+        const presentToday = todayAttendance.filter((a: any) => a.type === 'in' && a.status !== 'pending_telat' && a.status !== 'Ditolak');
         
         const lateToday = presentToday.filter((a: any) => {
+          if (a.status === 'Hadir (Telat)') return true;
           const t = parseTime(a.time);
           const empUnit = employees.find((e: any) => e.nip === a.nip)?.unit;
           const shift = getShiftForTime(t, empUnit);
@@ -178,8 +193,8 @@ export default function AdminDashboard() {
           { title: "Belum Absen", value: Math.max(0, employees.length - presentToday.length).toString(), icon: UserX, color: "text-red-600", bg: "bg-red-100" },
         ]);
 
-        // Pending Leaves: type 'izin'/'sakit'/'Cuti'/'dinas_luar' but status 'pending' (assuming status is 'pending' for new requests)
-        setPendingLeaves(attendance.filter((a: any) => ['izin', 'sakit', 'Cuti', 'dinas_luar'].includes(a.type) && a.status === 'pending'));
+        // Pending Approvals: Leave requests ('pending') and Late Check-ins ('pending_telat')
+        setPendingLeaves(attendance.filter((a: any) => (['izin', 'sakit', 'Cuti', 'dinas_luar'].includes(a.type) && a.status === 'pending') || a.status === 'pending_telat'));
 
         // Not Checked Out: Checked in today, but no 'out' record
         const checkedInNips = presentToday.map((a: any) => a.nip);
@@ -224,34 +239,75 @@ export default function AdminDashboard() {
       <div className="grid gap-4 md:grid-cols-2">
         <Card>
           <CardHeader>
-            <CardTitle>Permintaan Izin Menunggu ({pendingLeaves.length})</CardTitle>
+            <CardTitle>Permintaan Persetujuan Menunggu ({pendingLeaves.length})</CardTitle>
           </CardHeader>
           <CardContent>
             {pendingLeaves.length > 0 ? (
               <ul className="space-y-3">
-                {pendingLeaves.map((leave, i) => (
-                  <li key={i} className="flex justify-between items-center text-sm text-slate-700 bg-slate-50 p-2 rounded-lg border">
-                    <div>
-                      <span className="font-medium">{leave.name}</span>
-                      <span className="block text-xs text-slate-500 hover:text-slate-700 cursor-help" title={typeof leave.location === 'object' && leave.location !== null ? leave.location.reason : (leave.location || "Tanpa alasan")}>
-                        {leave.type === "Cuti" ? "Cuti Tahunan" : leave.type === "izin" ? "Izin" : leave.type === "sakit" ? "Sakit" : leave.type} - {leave.date} {(typeof leave.location === 'object' && leave.location !== null && leave.location.endDate && leave.location.endDate !== leave.date) ? `s/d ${leave.location.endDate}` : ""}
-                      </span>
-                      {leave.photoUrl && leave.photoUrl !== 'Image too large to save in spreadsheet' && (
-                        <a href={leave.photoUrl} target="_blank" rel="noreferrer" className="block text-xs text-blue-500 hover:underline mt-1">
-                          Lihat Lampiran
-                        </a>
-                      )}
-                    </div>
-                    <div className="flex gap-2">
-                      <Button size="sm" className="bg-emerald-600 hover:bg-emerald-700 h-8 text-xs px-2" onClick={() => handleApprove(leave.id, leave.type, 'approve')}>Setujui</Button>
-                      <Button size="sm" variant="destructive" className="h-8 text-xs px-2" onClick={() => handleApprove(leave.id, leave.type, 'reject')}>Tolak</Button>
-                    </div>
-                  </li>
-                ))}
+                {pendingLeaves.map((leave, i) => {
+                  const isLate = leave.status === 'pending_telat';
+                  const typeLabel =
+                    leave.type === 'dinas_luar'
+                      ? 'Dinas Luar'
+                      : leave.type === 'sakit'
+                        ? 'Sakit'
+                        : leave.type === 'Cuti' || leave.type === 'cuti'
+                          ? 'Cuti Tahunan'
+                          : leave.type === 'izin'
+                            ? 'Izin'
+                            : leave.type;
+                  const reasonDetail = typeof leave.location === 'object' && leave.location !== null ? (leave.location.reason || leave.location.address) : (leave.location || '');
+                  return (
+                    <li key={leave.id || i} className="flex justify-between items-center text-sm text-slate-700 bg-slate-50 p-2 rounded-lg border gap-2">
+                      <div className="min-w-0">
+                        <div className="flex items-center gap-2 flex-wrap">
+                          <span className="font-medium">{leave.name}</span>
+                          {isLate ? (
+                            <span className="text-[10px] font-semibold px-1.5 py-0.5 rounded bg-amber-100 text-amber-800 border border-amber-200">
+                              Absen Telat
+                            </span>
+                          ) : (
+                            <span className={`text-[10px] font-semibold px-1.5 py-0.5 rounded border ${
+                              leave.type === 'dinas_luar'
+                                ? 'bg-purple-100 text-purple-800 border-purple-200'
+                                : leave.type === 'sakit'
+                                  ? 'bg-blue-100 text-blue-800 border-blue-200'
+                                  : 'bg-slate-100 text-slate-700 border-slate-200'
+                            }`}>
+                              {typeLabel}
+                            </span>
+                          )}
+                        </div>
+                        <span className="block text-xs text-slate-500 hover:text-slate-700 cursor-help truncate" title={reasonDetail || "Tanpa keterangan"}>
+                          {isLate
+                            ? `Telat Masuk (${leave.time || '-'}) - ${leave.date}${leave.shift ? ` • Shift ${leave.shift}` : ''}`
+                            : `${typeLabel} - ${leave.date} ${(typeof leave.location === 'object' && leave.location !== null && leave.location.endDate && leave.location.endDate !== leave.date) ? `s/d ${leave.location.endDate}` : ""}${reasonDetail ? ` • "${reasonDetail}"` : ""}`}
+                        </span>
+                        {leave.photoUrl && leave.photoUrl !== 'Image too large to save in spreadsheet' && (
+                          <button
+                            type="button"
+                            onClick={() => setPreviewAttachment({
+                              url: leave.photoUrl,
+                              title: `${isLate ? 'Foto Absen Telat' : `Bukti ${typeLabel}`} - ${leave.name} (${leave.date})`
+                            })}
+                            className="inline-flex items-center gap-1 text-xs text-blue-500 hover:underline mt-1"
+                          >
+                            <FileText className="h-3 w-3" />
+                            {isLate ? 'Lihat Foto Absen' : 'Lihat Bukti Lampiran'}
+                          </button>
+                        )}
+                      </div>
+                      <div className="flex gap-2 shrink-0">
+                        <Button size="sm" className="bg-emerald-600 hover:bg-emerald-700 h-8 text-xs px-2" onClick={() => handleApprove(leave.id, leave.type, 'approve', leave.status)}>Setujui</Button>
+                        <Button size="sm" variant="destructive" className="h-8 text-xs px-2" onClick={() => handleApprove(leave.id, leave.type, 'reject', leave.status)}>Tolak</Button>
+                      </div>
+                    </li>
+                  );
+                })}
               </ul>
             ) : (
               <div className="text-sm text-slate-500 text-center py-8">
-                Tidak ada permintaan izin baru.
+                Tidak ada permintaan persetujuan baru.
               </div>
             )}
           </CardContent>
@@ -275,6 +331,46 @@ export default function AdminDashboard() {
           </CardContent>
         </Card>
       </div>
+
+      <Dialog open={!!previewAttachment} onOpenChange={(open) => { if (!open) setPreviewAttachment(null); }}>
+        <DialogContent className="sm:max-w-lg">
+          <DialogHeader>
+            <DialogTitle>{previewAttachment?.title}</DialogTitle>
+          </DialogHeader>
+          {previewAttachment && (
+            <div className="space-y-3">
+              <div className="flex flex-col items-center justify-center rounded-md border bg-slate-50 p-2 min-h-[200px]">
+                <img
+                  src={previewAttachment.url}
+                  alt={previewAttachment.title}
+                  className="max-h-96 w-auto rounded object-contain"
+                  onError={(e) => {
+                    const img = e.currentTarget;
+                    img.style.display = 'none';
+                    const iframe = img.nextElementSibling as HTMLIFrameElement | null;
+                    if (iframe) iframe.style.display = 'block';
+                  }}
+                />
+                <iframe
+                  src={previewAttachment.url}
+                  title={previewAttachment.title}
+                  className="hidden w-full h-96 rounded border bg-white"
+                />
+              </div>
+              <div className="flex justify-end">
+                <a
+                  href={previewAttachment.url}
+                  target="_blank"
+                  rel="noreferrer"
+                  className="text-xs text-blue-600 hover:underline"
+                >
+                  Buka di Tab Baru / Unduh
+                </a>
+              </div>
+            </div>
+          )}
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }

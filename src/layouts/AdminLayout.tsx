@@ -38,7 +38,7 @@ export default function AdminLayout() {
 
         if (attRes.ok) {
           const attData = await attRes.json();
-          const count = attData.filter((a: any) => a.status === 'pending').length;
+          const count = attData.filter((a: any) => a.status === 'pending' || a.status === 'pending_telat').length;
           setPendingCount(count);
         }
       } catch (error) {
@@ -143,7 +143,7 @@ export default function AdminLayout() {
                         Analisa Data
                       </DropdownMenuItem>
                       <DropdownMenuItem render={<Link to="/admin/attendance?tab=persetujuan" className="w-full cursor-pointer flex justify-between items-center" />}>
-                        <span>Persetujuan Izin</span>
+                        <span>Persetujuan</span>
                         {pendingCount > 0 && <span className="bg-rose-500 text-white text-[10px] px-1.5 py-0.5 rounded-full">{pendingCount}</span>}
                       </DropdownMenuItem>
                       <DropdownMenuItem render={<Link to="/admin/attendance?tab=holidays" className="w-full cursor-pointer" />}>
@@ -151,6 +151,9 @@ export default function AdminLayout() {
                       </DropdownMenuItem>
                       <DropdownMenuItem render={<Link to="/admin/attendance?tab=pengumuman" className="w-full cursor-pointer" />}>
                         Pengumuman
+                      </DropdownMenuItem>
+                      <DropdownMenuItem render={<Link to="/admin/attendance?tab=kegiatan" className="w-full cursor-pointer" />}>
+                        Senam &amp; Apel
                       </DropdownMenuItem>
                     </DropdownMenuContent>
                   </DropdownMenu>
@@ -211,6 +214,9 @@ export default function AdminLayout() {
                       <DropdownMenuItem render={<Link to="/admin/settings?tab=lokasi" className="w-full cursor-pointer" />}>
                         Lokasi
                       </DropdownMenuItem>
+                      <DropdownMenuItem render={<Link to="/admin/settings?tab=kegiatan" className="w-full cursor-pointer" />}>
+                        Jadwal Senam &amp; Apel
+                      </DropdownMenuItem>
                       <DropdownMenuItem render={<Link to="/admin/settings?tab=data" className="w-full cursor-pointer" />}>
                         Manajemen Data
                       </DropdownMenuItem>
@@ -246,11 +252,12 @@ export default function AdminLayout() {
                           <DropdownMenuItem render={<Link to="/admin/attendance?tab=bulanan" className="w-full cursor-pointer pl-6" />}>Absensi Bulanan</DropdownMenuItem>
                           <DropdownMenuItem render={<Link to="/admin/attendance?tab=analisa" className="w-full cursor-pointer pl-6" />}>Analisa Data</DropdownMenuItem>
                           <DropdownMenuItem render={<Link to="/admin/attendance?tab=persetujuan" className="w-full cursor-pointer pl-6 flex justify-between items-center" />}>
-                            <span>Persetujuan Izin</span>
+                            <span>Persetujuan</span>
                             {pendingCount > 0 && <span className="bg-rose-500 text-white text-[10px] px-1.5 py-0.5 rounded-full">{pendingCount}</span>}
                           </DropdownMenuItem>
                           <DropdownMenuItem render={<Link to="/admin/attendance?tab=holidays" className="w-full cursor-pointer pl-6" />}>Hari Libur</DropdownMenuItem>
                           <DropdownMenuItem render={<Link to="/admin/attendance?tab=pengumuman" className="w-full cursor-pointer pl-6" />}>Pengumuman</DropdownMenuItem>
+                          <DropdownMenuItem render={<Link to="/admin/attendance?tab=kegiatan" className="w-full cursor-pointer pl-6" />}>Senam &amp; Apel</DropdownMenuItem>
                         </DropdownMenuGroup>
                         <DropdownMenuSeparator />
                       </>
@@ -277,6 +284,7 @@ export default function AdminLayout() {
                         <DropdownMenuItem render={<Link to="/admin/settings?tab=absensi" className="w-full cursor-pointer pl-6" />}>Absensi</DropdownMenuItem>
                         <DropdownMenuItem render={<Link to="/admin/settings?tab=leave" className="w-full cursor-pointer pl-6" />}>Izin & Cuti</DropdownMenuItem>
                         <DropdownMenuItem render={<Link to="/admin/settings?tab=lokasi" className="w-full cursor-pointer pl-6" />}>Lokasi</DropdownMenuItem>
+                        <DropdownMenuItem render={<Link to="/admin/settings?tab=kegiatan" className="w-full cursor-pointer pl-6" />}>Jadwal Senam &amp; Apel</DropdownMenuItem>
                         <DropdownMenuItem render={<Link to="/admin/settings?tab=data" className="w-full cursor-pointer pl-6" />}>Manajemen Data</DropdownMenuItem>
                       </DropdownMenuGroup>
                     )}

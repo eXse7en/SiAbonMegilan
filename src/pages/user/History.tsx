@@ -62,7 +62,8 @@ export default function UserHistory() {
 
   const jamMasuk = inRecord?.time || '-';
   const jamKeluar = outRecord?.time || '-';
-  const status = leaveRecord ? (leaveRecord.type === 'Cuti' ? 'Cuti Tahunan' : leaveRecord.type === 'dinas_luar' ? 'Dinas Luar' : leaveRecord.type) : (dayAttendance.length > 0 ? dayAttendance[0].status : (holidayToday ? 'Libur' : 'Belum Absen'));
+  const rawStatus = leaveRecord ? (leaveRecord.type === 'Cuti' ? 'Cuti Tahunan' : leaveRecord.type === 'dinas_luar' ? 'Dinas Luar' : leaveRecord.type) : (inRecord ? inRecord.status : (dayAttendance.length > 0 ? dayAttendance[0].status : (holidayToday ? 'Libur' : 'Belum Absen')));
+  const status = rawStatus === 'pending_telat' ? 'Menunggu Persetujuan (Telat)' : rawStatus === 'Ditolak' && inRecord ? 'Ditolak (Telat)' : rawStatus;
 
   let leaveReason = null;
   if (leaveRecord) {
@@ -122,7 +123,15 @@ export default function UserHistory() {
           )}
           <div className="flex justify-between items-center pb-2">
             <span className="text-slate-400">Status</span>
-            <span className={`font-medium px-2 py-1 capitalize rounded ${status === 'Belum Absen' ? 'text-slate-400 bg-slate-800' : status === 'Libur' ? 'text-red-400 bg-red-400/10' : 'text-emerald-500 bg-emerald-500/10'}`}>
+            <span className={`font-medium px-2 py-1 capitalize rounded ${
+              status === 'Belum Absen'
+                ? 'text-slate-400 bg-slate-800'
+                : status === 'Libur' || rawStatus === 'Ditolak'
+                ? 'text-red-400 bg-red-400/10'
+                : rawStatus === 'pending_telat'
+                ? 'text-amber-400 bg-amber-400/10'
+                : 'text-emerald-500 bg-emerald-500/10'
+            }`}>
               {status} {leaveRecord && leaveRecord.status === 'pending' ? '(Menunggu)' : leaveRecord && leaveRecord.status === 'Ditolak' ? '(Ditolak)' : ''}
             </span>
           </div>

@@ -8,6 +8,7 @@ import { Button } from "@/components/ui/button";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { toast } from "sonner";
 import ExcelJS from 'exceljs';
+import ActivityScheduleManager from "@/components/ActivityScheduleManager";
 
 import { format } from 'date-fns';
 
@@ -35,13 +36,16 @@ export default function AdminSettings() {
   const [absensiSettings, setAbsensiSettings] = useState({
     tolerance: "15",
     enableCountdown: true,
-    enableEarlyCheckout: true
+    enableEarlyCheckout: true,
+    enableLateCheckIn: true
   });
   const [isSavingAbsensi, setIsSavingAbsensi] = useState(false);
 
   // State for Leave Settings
   const [leaveSettings, setLeaveSettings] = useState({
-    autoApprove: "0"
+    autoApprove: "0",
+    requireProofDinasLuar: true,
+    requireProofSakit: true
   });
   const [isSavingLeave, setIsSavingLeave] = useState(false);
 
@@ -308,7 +312,23 @@ export default function AdminSettings() {
                 />
                 <Label htmlFor="enableEarlyCheckout">Aktifkan Tombol Pulang Cepat</Label>
               </div>
-              <p className="text-xs text-slate-500 mt-1 mb-4">Mengizinkan karyawan absen pulang lebih awal sebelum waktunya.</p>
+              <p className="text-xs text-slate-500 mt-1">Mengizinkan karyawan absen pulang lebih awal sebelum waktunya.</p>
+
+              <div className="flex items-center space-x-2 mt-4">
+                <input
+                  type="checkbox"
+                  id="enableLateCheckIn"
+                  checked={absensiSettings.enableLateCheckIn !== false}
+                  onChange={(e) => setAbsensiSettings(prev => ({ ...prev, enableLateCheckIn: e.target.checked }))}
+                  className="h-4 w-4 rounded border-gray-300 relative cursor-pointer
+                    appearance-none checked:bg-teal-600 checked:border-transparent
+                    after:content-[''] after:hidden checked:after:block
+                    after:absolute after:left-[4px] after:top-0.5 after:w-[5px] after:h-[10px] 
+                    after:border-r-2 after:border-b-2 after:border-white after:rotate-45"
+                />
+                <Label htmlFor="enableLateCheckIn">Aktifkan Tombol Absen Telat</Label>
+              </div>
+              <p className="text-xs text-slate-500 mt-1 mb-4">Jika diaktifkan, tombol Absen Masuk akan berganti menjadi Absen Telat saat karyawan melewati batas toleransi keterlambatan dan memerlukan persetujuan atasan.</p>
 
               <Button className="mt-4" onClick={handleSaveAbsensi} disabled={isSavingAbsensi}>
                 {isSavingAbsensi ? "Menyimpan..." : "Simpan Perubahan"}
@@ -321,6 +341,7 @@ export default function AdminSettings() {
           <Card>
             <CardHeader>
               <CardTitle>Pengaturan Izin & Cuti</CardTitle>
+              <CardDescription>Atur kebijakan persetujuan dan kewajiban lampiran bukti izin karyawan.</CardDescription>
             </CardHeader>
             <CardContent className="space-y-4">
               <div className="grid gap-2">
@@ -328,6 +349,39 @@ export default function AdminSettings() {
                 <Input id="autoApprove" type="number" value={leaveSettings.autoApprove} onChange={handleLeaveChange} />
                 <p className="text-xs text-slate-500">Set 0 untuk menonaktifkan auto-approve.</p>
               </div>
+
+              <div className="flex items-center space-x-2 mt-4">
+                <input
+                  type="checkbox"
+                  id="requireProofDinasLuar"
+                  checked={leaveSettings.requireProofDinasLuar !== false}
+                  onChange={(e) => setLeaveSettings(prev => ({ ...prev, requireProofDinasLuar: e.target.checked }))}
+                  className="h-4 w-4 rounded border-gray-300 relative cursor-pointer
+                    appearance-none checked:bg-teal-600 checked:border-transparent
+                    after:content-[''] after:hidden checked:after:block
+                    after:absolute after:left-[4px] after:top-0.5 after:w-[5px] after:h-[10px] 
+                    after:border-r-2 after:border-b-2 after:border-white after:rotate-45"
+                />
+                <Label htmlFor="requireProofDinasLuar">Wajib Lampirkan Bukti Izin Dinas Luar</Label>
+              </div>
+              <p className="text-xs text-slate-500 mt-1">Karyawan wajib melampirkan surat tugas atau foto kegiatan Dinas Luar agar tombol Ajukan Izin dapat diklik.</p>
+
+              <div className="flex items-center space-x-2 mt-4">
+                <input
+                  type="checkbox"
+                  id="requireProofSakit"
+                  checked={leaveSettings.requireProofSakit !== false}
+                  onChange={(e) => setLeaveSettings(prev => ({ ...prev, requireProofSakit: e.target.checked }))}
+                  className="h-4 w-4 rounded border-gray-300 relative cursor-pointer
+                    appearance-none checked:bg-teal-600 checked:border-transparent
+                    after:content-[''] after:hidden checked:after:block
+                    after:absolute after:left-[4px] after:top-0.5 after:w-[5px] after:h-[10px] 
+                    after:border-r-2 after:border-b-2 after:border-white after:rotate-45"
+                />
+                <Label htmlFor="requireProofSakit">Wajib Lampirkan Bukti Izin Sakit</Label>
+              </div>
+              <p className="text-xs text-slate-500 mt-1 mb-4">Karyawan wajib melampirkan surat dokter atau foto kondisi sakit agar tombol Ajukan Izin dapat diklik.</p>
+
               <Button className="mt-4" onClick={handleSaveLeave} disabled={isSavingLeave}>
                 {isSavingLeave ? "Menyimpan..." : "Simpan Perubahan"}
               </Button>
@@ -400,6 +454,10 @@ export default function AdminSettings() {
               </Button>
             </CardContent>
           </Card>
+        </TabsContent>
+
+        <TabsContent value="kegiatan">
+          <ActivityScheduleManager />
         </TabsContent>
 
         <TabsContent value="data">
