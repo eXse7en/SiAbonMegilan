@@ -37,8 +37,24 @@ async function startServer() {
       headName: 'Dr. Budi Santoso',
       address: 'Jl. Kesehatan No. 1, Kota Sehat',
       mainLocation: '-7.250445, 112.768845',
-      tolerance: 25,
-    }
+      tolerance: 15,
+      generalSettings: {
+        appName: 'Si Abon Elite App',
+        companyName: 'Puskesmas Sehat',
+        headName: 'Dr. Budi Santoso',
+        address: 'Jl. Kesehatan No. 1, Kota Sehat',
+        mainLocation: '-7.250445, 112.768845',
+      },
+      absensiSettings: {
+        tolerance: '15',
+        enableCountdown: true,
+        enableEarlyCheckout: true,
+        enableLateCheckIn: true,
+      },
+    },
+    activitySchedules: [] as any[],
+    senamAttendance: [] as any[],
+    apelAttendance: [] as any[]
   };
 
   // Google Spreadsheet Setup
@@ -715,7 +731,7 @@ async function startServer() {
                 catch (e) { return row.get('location'); }
               })(),
               status: row.get('status'),
-              photoUrl: row.get('photoUrl') && row.get('photoUrl').startsWith('data:image') 
+              photoUrl: row.get('photoUrl') && row.get('photoUrl').startsWith('data:') 
                 ? `/api/attendance/${row.get('id')}/photo`
                 : (row.get('photoUrl') || ''),
               shift: row.get('shift')
@@ -727,7 +743,12 @@ async function startServer() {
         console.error('Error fetching attendance from spreadsheet:', error);
       }
     } else {
-      allAttendance = db.attendance;
+      allAttendance = db.attendance.map((a: any) => ({
+        ...a,
+        photoUrl: a.photoUrl && typeof a.photoUrl === 'string' && a.photoUrl.startsWith('data:')
+          ? `/api/attendance/${a.id}/photo`
+          : (a.photoUrl || '')
+      }));
     }
 
     const filterByDateRange = (start: string, end: string) => {
@@ -758,23 +779,28 @@ async function startServer() {
 
   app.get('/api/attendance/:id/photo', async (req, res) => {
     try {
-      const sheet = await getOrCreateSheet('Attendance', ['id', 'nip', 'name', 'date', 'time', 'type', 'location', 'status', 'photoUrl', 'shift']);
-      if (!sheet) return res.status(500).send('Database unavailable');
-      
-      const rows = await sheet.getRows();
-      const targetRow = rows.find(row => row.get('id') === req.params.id);
-      
-      if (!targetRow) return res.status(404).send('Not found');
-      
-      const photoUrl = targetRow.get('photoUrl');
-      if (!photoUrl || !photoUrl.startsWith('data:image')) {
-        return res.status(404).send('No image for this record');
+      let photoUrl = '';
+      if (doc) {
+        const sheet = await getOrCreateSheet('Attendance', ['id', 'nip', 'name', 'date', 'time', 'type', 'location', 'status', 'photoUrl', 'shift']);
+        if (!sheet) return res.status(500).send('Database unavailable');
+        
+        const rows = await sheet.getRows();
+        const targetRow = rows.find(row => String(row.get('id')) === String(req.params.id));
+        if (!targetRow) return res.status(404).send('Not found');
+        photoUrl = targetRow.get('photoUrl') || '';
+      } else {
+        const target = db.attendance.find((a: any) => String(a.id) === String(req.params.id));
+        if (!target) return res.status(404).send('Not found');
+        photoUrl = target.photoUrl || '';
+      }
+
+      if (!photoUrl || !photoUrl.startsWith('data:')) {
+        return res.status(404).send('No attachment for this record');
       }
       
-      // photoUrl format is usually like: data:image/jpeg;base64,/9j/4AAQ...
-      const matches = photoUrl.match(/^data:([A-Za-z-+\/]+);base64,(.+)$/);
+      const matches = photoUrl.match(/^data:([^;]+);base64,(.+)$/);
       if (!matches || matches.length !== 3) {
-         return res.status(400).send('Invalid image data');
+         return res.status(400).send('Invalid attachment data');
       }
       
       const mimeType = matches[1];
@@ -810,9 +836,11 @@ async function startServer() {
       }
     }
 
+    const newId = Date.now().toString();
+
     if (doc) {
       try {
-        const sheet = await getOrCreateSheet('Attendance', ['id', 'nip', 'name', 'date', 'time', 'type', 'location', 'status', 'photoUrl']);
+        const sheet = await getOrCreateSheet('Attendance', ['id', 'nip', 'name', 'date', 'time', 'type', 'location', 'status', 'photoUrl', 'shift']);
         if (sheet) {
           // Google Sheets cell limit is 50,000 characters.
           // Base64 images can easily exceed this.
@@ -825,7 +853,7 @@ async function startServer() {
           }
 
           await sheet.addRow({
-            id: Date.now().toString(),
+            id: newId,
             ...attendanceData,
             photoUrl: photoUrlToSave,
             location: typeof attendanceData.location === 'object' ? JSON.stringify(attendanceData.location) : attendanceData.location
@@ -837,10 +865,10 @@ async function startServer() {
         return res.status(500).json({ success: false, message: 'Gagal menyimpan absensi ke spreadsheet. Mungkin ukuran foto terlalu besar.' });
       }
     } else {
-      db.attendance.push({ id: Date.now().toString(), ...attendanceData } as any);
+      db.attendance.push({ id: newId, ...attendanceData } as any);
     }
 
-    res.json({ success: true, message: 'Absensi berhasil dicatat' });
+    res.json({ success: true, id: newId, message: 'Absensi berhasil dicatat' });
   });
 
   app.post('/api/attendance/bulk', async (req, res) => {
@@ -918,6 +946,7 @@ async function startServer() {
       const missingOuts = [];
 
       for (const inRec of inRecords) {
+        if (inRec.status === 'Ditolak') continue;
         if (outRecords.some(o => o.nip === inRec.nip && o.date === inRec.date)) continue;
 
         // Determine this record's shift
@@ -996,7 +1025,7 @@ async function startServer() {
         const sheet = await getSheet('Attendance');
         if (sheet) {
           const rows = await sheet.getRows();
-          const rowToUpdate = rows.find(r => r.get('id') === id);
+          const rowToUpdate = rows.find(r => String(r.get('id')) === String(id));
           if (rowToUpdate) {
             rowToUpdate.set('status', status);
             await rowToUpdate.save();
@@ -1013,7 +1042,7 @@ async function startServer() {
     }
     
     // In-memory fallback
-    const record = db.attendance.find((a: any) => a.id === id);
+    const record = db.attendance.find((a: any) => String(a.id) === String(id));
     if (record) {
       record.status = status;
       return res.json({ success: true, message: 'Status berhasil diperbarui' });
@@ -1761,6 +1790,414 @@ async function startServer() {
       }
     }
     res.json({ success: true, message: 'Pengaturan berhasil disimpan' });
+  });
+
+  // --- Activity Schedules (Senam & Apel) API ---
+  app.get('/api/activity-schedules', async (req, res) => {
+    if (doc) {
+      try {
+        const schedules = await getCachedData('activitySchedules', async () => {
+          const sheet = await getOrCreateSheet('ActivitySchedules', [
+            'id',
+            'name',
+            'activityType',
+            'locationName',
+            'coordinates',
+            'radius',
+            'day',
+            'time',
+            'isActive'
+          ]);
+          if (sheet) {
+            const rows = await sheet.getRows();
+            return rows.map(row => ({
+              id: row.get('id'),
+              name: row.get('name') || '',
+              activityType: row.get('activityType') || 'senam',
+              locationName: row.get('locationName') || 'Kantor Induk',
+              coordinates: row.get('coordinates') || '',
+              radius: parseInt(row.get('radius') || '200', 10) || 200,
+              day: row.get('day') || 'Jumat',
+              time: row.get('time') || '07:00',
+              isActive: String(row.get('isActive')).toLowerCase() === 'true'
+            }));
+          }
+          return [];
+        });
+        return res.json(schedules);
+      } catch (error) {
+        console.error('Error fetching activity schedules from spreadsheet:', error);
+      }
+    }
+    res.json(db.activitySchedules);
+  });
+
+  app.post('/api/activity-schedules', async (req, res) => {
+    const schedule = req.body;
+    const newId = schedule.id ? String(schedule.id) : Date.now().toString();
+    const inferredType =
+      schedule.activityType === 'apel' || schedule.activityType === 'senam'
+        ? schedule.activityType
+        : String(schedule.name || '').toLowerCase().includes('apel')
+          ? 'apel'
+          : 'senam';
+
+    const record = {
+      id: newId,
+      name: schedule.name || (inferredType === 'apel' ? 'Upacara Apel' : 'Senam Pagi'),
+      activityType: inferredType,
+      locationName: schedule.locationName || 'Kantor Induk',
+      coordinates: schedule.coordinates || '',
+      radius: parseInt(String(schedule.radius || 200), 10) || 200,
+      day: schedule.day || 'Jumat',
+      time: schedule.time || '07:00',
+      isActive: schedule.isActive !== false
+    };
+
+    if (doc) {
+      try {
+        const sheet = await getOrCreateSheet('ActivitySchedules', [
+          'id',
+          'name',
+          'activityType',
+          'locationName',
+          'coordinates',
+          'radius',
+          'day',
+          'time',
+          'isActive'
+        ]);
+        if (sheet) {
+          await sheet.addRow({
+            ...record,
+            radius: record.radius.toString(),
+            isActive: record.isActive.toString()
+          });
+          delete cache['activitySchedules'];
+        }
+      } catch (error) {
+        console.error('Error saving activity schedule to spreadsheet:', error);
+        return res.status(500).json({ success: false, message: 'Gagal menyimpan jadwal kegiatan ke spreadsheet' });
+      }
+    } else {
+      db.activitySchedules.push(record);
+    }
+
+    res.json({ success: true, id: newId, schedule: record, message: 'Jadwal kegiatan berhasil disimpan' });
+  });
+
+  app.put('/api/activity-schedules/:id', async (req, res) => {
+    const { id } = req.params;
+    const updates = req.body;
+    const inferredType =
+      updates.activityType === 'apel' || updates.activityType === 'senam'
+        ? updates.activityType
+        : updates.name
+          ? (String(updates.name).toLowerCase().includes('apel') ? 'apel' : 'senam')
+          : undefined;
+
+    if (doc) {
+      try {
+        const sheet = await getOrCreateSheet('ActivitySchedules', [
+          'id',
+          'name',
+          'activityType',
+          'locationName',
+          'coordinates',
+          'radius',
+          'day',
+          'time',
+          'isActive'
+        ]);
+        if (sheet) {
+          const rows = await sheet.getRows();
+          const rowToUpdate = rows.find(r => String(r.get('id')) === String(id));
+          if (!rowToUpdate) {
+            return res.status(404).json({ success: false, message: 'Jadwal kegiatan tidak ditemukan' });
+          }
+          if (updates.name !== undefined) rowToUpdate.set('name', updates.name);
+          if (inferredType !== undefined) rowToUpdate.set('activityType', inferredType);
+          if (updates.locationName !== undefined) rowToUpdate.set('locationName', updates.locationName);
+          if (updates.coordinates !== undefined) rowToUpdate.set('coordinates', updates.coordinates);
+          if (updates.radius !== undefined) rowToUpdate.set('radius', String(updates.radius || 200));
+          if (updates.day !== undefined) rowToUpdate.set('day', updates.day);
+          if (updates.time !== undefined) rowToUpdate.set('time', updates.time);
+          if (updates.isActive !== undefined) rowToUpdate.set('isActive', Boolean(updates.isActive).toString());
+          await rowToUpdate.save();
+          delete cache['activitySchedules'];
+        }
+      } catch (error) {
+        console.error('Error updating activity schedule in spreadsheet:', error);
+        return res.status(500).json({ success: false, message: 'Gagal memperbarui jadwal kegiatan' });
+      }
+    } else {
+      const idx = db.activitySchedules.findIndex((s: any) => String(s.id) === String(id));
+      if (idx === -1) {
+        return res.status(404).json({ success: false, message: 'Jadwal kegiatan tidak ditemukan' });
+      }
+      db.activitySchedules[idx] = {
+        ...db.activitySchedules[idx],
+        ...updates,
+        ...(inferredType ? { activityType: inferredType } : {})
+      };
+    }
+
+    res.json({ success: true, message: 'Jadwal kegiatan berhasil diperbarui' });
+  });
+
+  app.delete('/api/activity-schedules/:id', async (req, res) => {
+    const { id } = req.params;
+    if (doc) {
+      try {
+        const sheet = await getSheet('ActivitySchedules');
+        if (sheet) {
+          const rows = await sheet.getRows();
+          const rowToDelete = rows.find(r => String(r.get('id')) === String(id));
+          if (rowToDelete) {
+            await rowToDelete.delete();
+            delete cache['activitySchedules'];
+          }
+        }
+      } catch (error) {
+        console.error('Error deleting activity schedule from spreadsheet:', error);
+        return res.status(500).json({ success: false, message: 'Gagal menghapus jadwal kegiatan' });
+      }
+    } else {
+      db.activitySchedules = db.activitySchedules.filter((s: any) => String(s.id) !== String(id));
+    }
+
+    res.json({ success: true, message: 'Jadwal kegiatan berhasil dihapus' });
+  });
+
+  // --- Activity Attendance API (Separate Sheets: AbsensiSenam & AbsensiApel) ---
+  const ACTIVITY_HEADERS = [
+    'id',
+    'nip',
+    'name',
+    'activityId',
+    'activityName',
+    'date',
+    'time',
+    'location',
+    'coordinates',
+    'distance',
+    'status',
+    'photoUrl'
+  ];
+
+  const getActivitySheetName = (type: string) => (type === 'apel' ? 'AbsensiApel' : 'AbsensiSenam');
+  const getActivityCacheKey = (type: string) => (type === 'apel' ? 'apelAttendance' : 'senamAttendance');
+
+  const fetchActivityRowsByType = async (type: 'senam' | 'apel') => {
+    const sheetName = getActivitySheetName(type);
+    const cacheKey = getActivityCacheKey(type);
+
+    if (doc) {
+      return await getCachedData(cacheKey, async () => {
+        const sheet = await getOrCreateSheet(sheetName, ACTIVITY_HEADERS);
+        if (!sheet) return [];
+        const rows = await sheet.getRows();
+        return rows.map(row => ({
+          id: row.get('id'),
+          nip: row.get('nip'),
+          name: row.get('name'),
+          activityId: row.get('activityId') || '',
+          activityName: row.get('activityName') || (type === 'apel' ? 'Upacara Apel' : 'Senam Pagi'),
+          activityType: type,
+          date: row.get('date'),
+          time: row.get('time'),
+          location: row.get('location') || '',
+          coordinates: row.get('coordinates') || '',
+          distance: row.get('distance') ? Number(row.get('distance')) : 0,
+          status: row.get('status') || 'Hadir',
+          photoUrl: row.get('photoUrl') && String(row.get('photoUrl')).startsWith('data:')
+            ? `/api/activity-attendance/${type}/${row.get('id')}/photo`
+            : (row.get('photoUrl') || '')
+        }));
+      });
+    }
+
+    const list = type === 'apel' ? db.apelAttendance : db.senamAttendance;
+    return list.map((a: any) => ({
+      ...a,
+      activityType: type,
+      photoUrl: a.photoUrl && typeof a.photoUrl === 'string' && a.photoUrl.startsWith('data:')
+        ? `/api/activity-attendance/${type}/${a.id}/photo`
+        : (a.photoUrl || '')
+    }));
+  };
+
+  app.get('/api/activity-attendance', async (req, res) => {
+    const { type = 'all', startDate, endDate, nip } = req.query;
+    try {
+      let records: any[] = [];
+      if (type === 'senam') {
+        records = await fetchActivityRowsByType('senam');
+      } else if (type === 'apel') {
+        records = await fetchActivityRowsByType('apel');
+      } else {
+        const [senamRows, apelRows] = await Promise.all([
+          fetchActivityRowsByType('senam'),
+          fetchActivityRowsByType('apel')
+        ]);
+        records = [...senamRows, ...apelRows];
+      }
+
+      if (startDate && endDate) {
+        records = records.filter(r => r.date >= String(startDate) && r.date <= String(endDate));
+      }
+      if (nip) {
+        records = records.filter(r => String(r.nip) === String(nip));
+      }
+
+      records.sort((a, b) => {
+        const keyA = `${a.date || ''} ${a.time || ''}`;
+        const keyB = `${b.date || ''} ${b.time || ''}`;
+        return keyB.localeCompare(keyA);
+      });
+
+      res.json(records);
+    } catch (error) {
+      console.error('Error fetching activity attendance:', error);
+      res.status(500).json({ success: false, message: 'Gagal mengambil data absensi kegiatan' });
+    }
+  });
+
+  app.get('/api/activity-attendance/:type/:id/photo', async (req, res) => {
+    const { type, id } = req.params;
+    const normalizedType: 'senam' | 'apel' = type === 'apel' ? 'apel' : 'senam';
+
+    try {
+      let photoUrl = '';
+      if (doc) {
+        const sheet = await getOrCreateSheet(getActivitySheetName(normalizedType), ACTIVITY_HEADERS);
+        if (!sheet) return res.status(500).send('Database unavailable');
+        const rows = await sheet.getRows();
+        const targetRow = rows.find(row => String(row.get('id')) === String(id));
+        if (!targetRow) return res.status(404).send('Not found');
+        photoUrl = targetRow.get('photoUrl') || '';
+      } else {
+        const list = normalizedType === 'apel' ? db.apelAttendance : db.senamAttendance;
+        const target = list.find((a: any) => String(a.id) === String(id));
+        if (!target) return res.status(404).send('Not found');
+        photoUrl = target.photoUrl || '';
+      }
+
+      if (!photoUrl || !photoUrl.startsWith('data:')) {
+        return res.status(404).send('No photo for this record');
+      }
+
+      const matches = photoUrl.match(/^data:([^;]+);base64,(.+)$/);
+      if (!matches || matches.length !== 3) {
+        return res.status(400).send('Invalid photo data');
+      }
+
+      const mimeType = matches[1];
+      const buffer = Buffer.from(matches[2], 'base64');
+      res.set('Content-Type', mimeType);
+      res.send(buffer);
+    } catch (e) {
+      console.error('Error serving activity attendance photo:', e);
+      res.status(500).send('Internal error');
+    }
+  });
+
+  app.post('/api/activity-attendance', async (req, res) => {
+    const data = req.body;
+    const normalizedType: 'senam' | 'apel' =
+      data.activityType === 'apel' || String(data.activityName || '').toLowerCase().includes('apel')
+        ? 'apel'
+        : 'senam';
+
+    // Enforce Server Time (Asia/Jakarta)
+    const now = new Date();
+    const timeFormatter = new Intl.DateTimeFormat('id-ID', { timeZone: 'Asia/Jakarta', hour: '2-digit', minute: '2-digit', hour12: false });
+    const serverTimeStr = timeFormatter.format(now).replace('.', ':');
+    const dateFormatter = new Intl.DateTimeFormat('en-US', { timeZone: 'Asia/Jakarta', year: 'numeric', month: '2-digit', day: '2-digit' });
+    const parts = dateFormatter.formatToParts(now);
+    const serverDateStr = `${parts.find(p => p.type === 'year')?.value}-${parts.find(p => p.type === 'month')?.value}-${parts.find(p => p.type === 'day')?.value}`;
+
+    const newId = Date.now().toString();
+    let photoUrlToSave = data.photoUrl || '';
+    if (photoUrlToSave.length > 49000) {
+      photoUrlToSave = 'Image too large to save in spreadsheet';
+    }
+
+    const rowPayload = {
+      id: newId,
+      nip: data.nip || 'N/A',
+      name: data.name || 'N/A',
+      activityId: data.activityId || '',
+      activityName: data.activityName || (normalizedType === 'apel' ? 'Upacara Apel' : 'Senam Pagi'),
+      date: serverDateStr,
+      time: serverTimeStr,
+      location: data.location || '',
+      coordinates: data.coordinates || '',
+      distance: data.distance !== undefined ? String(Math.round(Number(data.distance))) : '0',
+      status: data.status || 'Hadir',
+      photoUrl: photoUrlToSave
+    };
+
+    try {
+      const existing = await fetchActivityRowsByType(normalizedType);
+      const alreadyChecked = existing.some((r: any) =>
+        String(r.nip) === String(rowPayload.nip) &&
+        r.date === rowPayload.date &&
+        ((rowPayload.activityId && String(r.activityId) === String(rowPayload.activityId)) ||
+          r.activityName === rowPayload.activityName)
+      );
+
+      if (alreadyChecked) {
+        return res.status(400).json({
+          success: false,
+          message: `Anda sudah melakukan absensi ${rowPayload.activityName} hari ini.`
+        });
+      }
+
+      if (doc) {
+        const sheet = await getOrCreateSheet(getActivitySheetName(normalizedType), ACTIVITY_HEADERS);
+        if (sheet) {
+          await sheet.addRow(rowPayload);
+          delete cache[getActivityCacheKey(normalizedType)];
+        }
+      } else {
+        const list = normalizedType === 'apel' ? db.apelAttendance : db.senamAttendance;
+        list.push({ ...rowPayload, activityType: normalizedType });
+      }
+
+      res.json({ success: true, id: newId, message: `Absensi ${rowPayload.activityName} berhasil dicatat` });
+    } catch (error) {
+      console.error('Error saving activity attendance:', error);
+      res.status(500).json({ success: false, message: 'Gagal menyimpan absensi kegiatan' });
+    }
+  });
+
+  app.delete('/api/activity-attendance/:type/:id', async (req, res) => {
+    const { type, id } = req.params;
+    const normalizedType: 'senam' | 'apel' = type === 'apel' ? 'apel' : 'senam';
+    if (doc) {
+      try {
+        const sheet = await getSheet(getActivitySheetName(normalizedType));
+        if (sheet) {
+          const rows = await sheet.getRows();
+          const rowToDelete = rows.find(r => String(r.get('id')) === String(id));
+          if (rowToDelete) {
+            await rowToDelete.delete();
+            delete cache[getActivityCacheKey(normalizedType)];
+          }
+        }
+      } catch (error) {
+        console.error('Error deleting activity attendance:', error);
+        return res.status(500).json({ success: false, message: 'Gagal menghapus data absensi kegiatan' });
+      }
+    } else {
+      if (normalizedType === 'apel') {
+        db.apelAttendance = db.apelAttendance.filter((a: any) => String(a.id) !== String(id));
+      } else {
+        db.senamAttendance = db.senamAttendance.filter((a: any) => String(a.id) !== String(id));
+      }
+    }
+    res.json({ success: true, message: 'Data absensi kegiatan berhasil dihapus' });
   });
 
   app.get('/healthz', (req, res) => {

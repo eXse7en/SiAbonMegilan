@@ -9,11 +9,12 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger, DialogFooter } from "@/components/ui/dialog";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { Download, Search, Plus, Upload, Trash2, Users, TrendingUp, Clock, CalendarDays, Award, AlertTriangle, Timer, Check, X, RefreshCw } from "lucide-react";
+import { Download, Search, Plus, Upload, Trash2, Users, TrendingUp, Clock, CalendarDays, Award, AlertTriangle, Timer, Check, X, RefreshCw, FileText } from "lucide-react";
 import { toast } from "sonner";
 import ExcelJS from 'exceljs';
 import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer, AreaChart, Area, BarChart, Bar, LabelList } from 'recharts';
 import { format } from 'date-fns';
+import ActivityScheduleManager from "@/components/ActivityScheduleManager";
 
 export interface GeneralSettings {
   companyName?: string;
@@ -28,6 +29,7 @@ export interface AbsensiSettings {
   tolerance?: string;
   enableCountdown?: boolean;
   enableEarlyCheckout?: boolean;
+  enableLateCheckIn?: boolean;
 }
 
 export interface Employee {
@@ -81,6 +83,10 @@ export default function AdminAttendance() {
   const [absensiSettings, setAbsensiSettings] = useState<AbsensiSettings>({});
   const [shifts, setShifts] = useState<Shift[]>([]);
   const [employees, setEmployees] = useState<Employee[]>([]);
+  const [previewAttachment, setPreviewAttachment] = useState<{ url: string; title: string } | null>(null);
+  const [activityAttendance, setActivityAttendance] = useState<any[]>([]);
+  const [activityFilterType, setActivityFilterType] = useState<string>("all");
+  const [activitySearch, setActivitySearch] = useState<string>("");
 
   useEffect(() => {
     const fetchEmployees = async () => {
@@ -178,8 +184,22 @@ export default function AdminAttendance() {
     }
   };
 
+  const fetchActivityAttendance = async () => {
+    try {
+      const res = await fetch('/api/activity-attendance');
+      if (res.ok) {
+        const data = await res.json();
+        setActivityAttendance(data);
+      }
+    } catch (err) {
+      if (err instanceof TypeError && err.message.includes('fetch')) return;
+      console.error('Failed to fetch activity attendance:', err);
+    }
+  };
+
   useEffect(() => {
     fetchAttendance();
+    fetchActivityAttendance();
   }, []);
 
   const parseTime = (timeStr: string) => {
@@ -231,11 +251,16 @@ export default function AdminAttendance() {
       endTimeStr = bestShift.saturdayEndTime;
     }
 
+    const globalTol = absensiSettings?.tolerance;
+    const parsedTol = (globalTol !== undefined && globalTol !== '' && !isNaN(Number(globalTol)))
+      ? parseInt(String(globalTol), 10)
+      : parseInt(String(bestShift.checkInAfterMinutes ?? '15'), 10);
+
     return {
       name: bestShift.name,
       start: parseTime(bestShift.startTime),
       end: parseTime(endTimeStr),
-      tolerance: parseInt(bestShift.checkInAfterMinutes || absensiSettings.tolerance || '15')
+      tolerance: isNaN(parsedTol) ? 15 : parsedTol
     };
   };
 
@@ -318,7 +343,11 @@ export default function AdminAttendance() {
     }
 
     let displayStatus = inRecord?.status || outRecord?.status || leaveRecord?.status || baseRecord.status;
-    if (outRecord && outRecord.status === 'Hadir (Pulang Cepat)') {
+    if (inRecord && inRecord.status === 'pending_telat') {
+        displayStatus = 'Menunggu Persetujuan (Telat)';
+    } else if (inRecord && inRecord.status === 'Ditolak') {
+        displayStatus = 'Ditolak (Telat)';
+    } else if (outRecord && outRecord.status === 'Hadir (Pulang Cepat)') {
         displayStatus = outRecord.status;
     } else if (outRecord && outRecord.status === 'Hadir (Ganti Jaga)') {
         displayStatus = outRecord.status;
@@ -375,13 +404,16 @@ export default function AdminAttendance() {
       const inRecord = exactRecords.find(a => a.type === 'in');
       let outRecord = exactRecords.find(a => a.type === 'out');
       
-      // Find a multi-day (or single day) leave record that covers this date
-      const leaveRecord = empAttendance.find(a => isDateInLeaveRange(a, date));
+      // Find a multi-day (or single day) leave record that covers this date (exclude rejected leaves)
+      const leaveRecord = empAttendance.find(a => a.status !== 'Ditolak' && isDateInLeaveRange(a, date));
 
       let statusInfo = { code: '-', hours: 0, onlyIn: false, bgColor: '' };
 
       if (leaveRecord) {
-        if (leaveRecord.status === 'izin' || leaveRecord.type === 'izin') {
+        if (leaveRecord.status === 'pending') {
+          statusInfo.code = 'P';
+          statusInfo.hours = 0;
+        } else if (leaveRecord.status === 'izin' || leaveRecord.type === 'izin') {
           statusInfo.code = 'I';
           const dayNumber = getLeaveDayNumber(leaveRecord, date);
           statusInfo.hours = dayNumber <= 3 ? (6 + 25/60) : 0;
@@ -401,45 +433,53 @@ export default function AdminAttendance() {
           const dayNumber = getLeaveDayNumber(leaveRecord, date);
           statusInfo.hours = dayNumber <= 3 ? (6 + 25/60) : 0;
         }
-        else if (leaveRecord.status === 'pending') statusInfo.code = 'P';
         else statusInfo.code = leaveRecord.status?.[0] || 'M';
       } else if (inRecord) {
-        statusInfo.code = 'M';
-        
-        // Handle cross-midnight out record from the next day if missing today
-        if (!outRecord) {
-          const dateParts = date.split('-');
-          const dateObj = new Date(parseInt(dateParts[0]), parseInt(dateParts[1]) - 1, parseInt(dateParts[2]));
-          const nextDay = new Date(dateObj.getTime() + 86400000);
-          const nextDayStr = [
-                 nextDay.getFullYear(),
-                 String(nextDay.getMonth() + 1).padStart(2, '0'),
-                 String(nextDay.getDate()).padStart(2, '0')
-          ].join('-');
-          const nextDayOut = empAttendance.find(a => a.date === nextDayStr && a.type === 'out');
-          const nextDayIn = empAttendance.find(a => a.date === nextDayStr && a.type === 'in');
-          if (nextDayOut && !nextDayIn) {
-            outRecord = nextDayOut;
-          }
-        }
-
-        if (outRecord) {
-          // Calculate duration between inRecord.time and outRecord.time
-          let inParts = inRecord.time.split(/[:.]/);
-          let outParts = outRecord.time.split(/[:.]/);
-          if (inParts.length >= 2 && outParts.length >= 2) {
-             let inH = parseInt(inParts[0]), inM = parseInt(inParts[1]);
-             let outH = parseInt(outParts[0]), outM = parseInt(outParts[1]);
-             let durationH = outH - inH + (outM - inM) / 60;
-             if (durationH < 0) durationH += 24; // Cross midnight
-             statusInfo.hours = Number(durationH.toFixed(2));
-          }
-          statusInfo.onlyIn = false;
+        if (inRecord.status === 'pending_telat') {
+          statusInfo.code = 'P';
+          statusInfo.hours = 0;
+          statusInfo.bgColor = 'bg-amber-100 dark:bg-amber-900/40';
+        } else if (inRecord.status === 'Ditolak') {
+          statusInfo.code = '-';
+          statusInfo.hours = 0;
         } else {
-          // Only 'in' record
-          statusInfo.hours = 6;
-          statusInfo.onlyIn = true;
-          statusInfo.bgColor = 'bg-yellow-200 dark:bg-yellow-900/50';
+          statusInfo.code = 'M';
+          
+          // Handle cross-midnight out record from the next day if missing today
+          if (!outRecord) {
+            const dateParts = date.split('-');
+            const dateObj = new Date(parseInt(dateParts[0]), parseInt(dateParts[1]) - 1, parseInt(dateParts[2]));
+            const nextDay = new Date(dateObj.getTime() + 86400000);
+            const nextDayStr = [
+                   nextDay.getFullYear(),
+                   String(nextDay.getMonth() + 1).padStart(2, '0'),
+                   String(nextDay.getDate()).padStart(2, '0')
+            ].join('-');
+            const nextDayOut = empAttendance.find(a => a.date === nextDayStr && a.type === 'out');
+            const nextDayIn = empAttendance.find(a => a.date === nextDayStr && a.type === 'in');
+            if (nextDayOut && !nextDayIn) {
+              outRecord = nextDayOut;
+            }
+          }
+
+          if (outRecord) {
+            // Calculate duration between inRecord.time and outRecord.time
+            let inParts = inRecord.time.split(/[:.]/);
+            let outParts = outRecord.time.split(/[:.]/);
+            if (inParts.length >= 2 && outParts.length >= 2) {
+               let inH = parseInt(inParts[0]), inM = parseInt(inParts[1]);
+               let outH = parseInt(outParts[0]), outM = parseInt(outParts[1]);
+               let durationH = outH - inH + (outM - inM) / 60;
+               if (durationH < 0) durationH += 24; // Cross midnight
+               statusInfo.hours = Number(durationH.toFixed(2));
+            }
+            statusInfo.onlyIn = false;
+          } else {
+            // Only 'in' record
+            statusInfo.hours = 6;
+            statusInfo.onlyIn = true;
+            statusInfo.bgColor = 'bg-yellow-200 dark:bg-yellow-900/50';
+          }
         }
       } else if (outRecord) {
          // Check if this outRecord belongs to yesterday's inRecord.
@@ -481,6 +521,9 @@ export default function AdminAttendance() {
   const getStatusColor = (status: string) => {
     switch (status) {
       case 'M': return 'text-emerald-600 font-medium';
+      case 'Hadir (Telat)': return 'text-amber-600 font-medium';
+      case 'Menunggu Persetujuan (Telat)': return 'text-rose-500 font-medium';
+      case 'Ditolak (Telat)': return 'text-red-600 font-medium';
       case 'C': return 'text-amber-600 font-medium';
       case 'S': return 'text-blue-600 font-medium';
       case 'D': return 'text-purple-600 font-medium';
@@ -521,11 +564,11 @@ export default function AdminAttendance() {
       let terlambat = 0;
       
       dayAtt.forEach(a => {
-        if (a.type === 'in') {
+        if (a.type === 'in' && a.status !== 'pending_telat' && a.status !== 'Ditolak') {
           const t = parseTime(a.time);
           const empUnit = employees.find(e => e.nip === a.nip)?.unit;
           const shift = getShiftForTime(t, empUnit);
-          if (t <= shift.start + shift.tolerance) {
+          if (t <= shift.start + shift.tolerance && a.status !== 'Hadir (Telat)') {
             hadir++;
           } else {
             terlambat++;
@@ -548,7 +591,7 @@ export default function AdminAttendance() {
       const unit = emp.unit || 'Lainnya';
       if (!unitMap[unit]) unitMap[unit] = { total: 0, hadir: 0 };
       
-      const empAtt = filteredAttendance.filter(a => a.nip === emp.nip && a.type === 'in');
+      const empAtt = filteredAttendance.filter(a => a.nip === emp.nip && a.type === 'in' && a.status !== 'pending_telat' && a.status !== 'Ditolak');
       unitMap[unit].total += expectedWorkDays;
       unitMap[unit].hadir += empAtt.length;
     });
@@ -569,7 +612,7 @@ export default function AdminAttendance() {
     const distribusiStatusData = weeks.map(week => {
       const weekAtt = filteredAttendance.filter(a => week.dates.includes(a.date));
       const totalInWeek = employees.length * week.dates.length;
-      const hadir = weekAtt.filter(a => a.type === 'in').length;
+      const hadir = weekAtt.filter(a => a.type === 'in' && a.status !== 'pending_telat' && a.status !== 'Ditolak').length;
       const cuti = weekAtt.filter(a => a.type === 'Cuti' || a.type === 'cuti').length;
       const sakit = weekAtt.filter(a => a.type === 'sakit' || a.type === 'Sakit').length;
       const dinas = weekAtt.filter(a => a.type === 'izin' || a.type === 'Izin').length;
@@ -837,12 +880,14 @@ export default function AdminAttendance() {
   };
 
   const pendingRequests = useMemo(() => {
-    return attendanceData.filter(a => a.status === 'pending');
+    return attendanceData.filter(a => a.status === 'pending' || a.status === 'pending_telat');
   }, [attendanceData]);
 
-  const handleApproveLeave = async (id: string, type: string) => {
+  const handleApproveLeave = async (id: string, type: string, currentStatus?: string) => {
     let finalStatus = 'Hadir'; // fallback
-    if (type === 'izin') finalStatus = 'izin';
+    if (currentStatus === 'pending_telat' || type === 'in') {
+      finalStatus = 'Hadir (Telat)';
+    } else if (type === 'izin') finalStatus = 'izin';
     else if (type === 'sakit') finalStatus = 'Sakit';
     else if (type === 'Cuti' || type === 'cuti') finalStatus = 'Cuti';
     else if (type === 'dinas_luar') finalStatus = 'Dinas Luar';
@@ -1034,6 +1079,7 @@ export default function AdminAttendance() {
           </TabsTrigger>
           <TabsTrigger value="holidays">Hari Libur</TabsTrigger>
           <TabsTrigger value="pengumuman">Pengumuman</TabsTrigger>
+          <TabsTrigger value="kegiatan">Senam &amp; Apel</TabsTrigger>
         </TabsList>
         <TabsContent value="harian" className="space-y-4">
           <Card>
@@ -1472,11 +1518,11 @@ export default function AdminAttendance() {
         <TabsContent value="persetujuan">
           <Card>
             <CardHeader>
-              <CardTitle>Daftar Permintaan Persetujuan</CardTitle>
+              <CardTitle>Daftar Permintaan Persetujuan (Izin &amp; Absen Telat)</CardTitle>
             </CardHeader>
             <CardContent>
               {pendingRequests.length === 0 ? (
-                <div className="text-center py-10 text-slate-500">Belum ada permintaan izin yang perlu disetujui.</div>
+                <div className="text-center py-10 text-slate-500">Belum ada permintaan izin atau absen telat yang perlu disetujui.</div>
               ) : (
                 <div className="rounded-md border">
                   <Table>
@@ -1484,60 +1530,148 @@ export default function AdminAttendance() {
                       <TableRow>
                         <TableHead>Nama Karyawan</TableHead>
                         <TableHead>NIP</TableHead>
-                        <TableHead>Jenis Izin</TableHead>
-                        <TableHead>Tanggal</TableHead>
-                        <TableHead>Keterangan</TableHead>
+                        <TableHead>Jenis</TableHead>
+                        <TableHead>Tanggal / Jam</TableHead>
+                        <TableHead>Keterangan / Lokasi</TableHead>
                         <TableHead className="text-right">Aksi</TableHead>
                       </TableRow>
                     </TableHeader>
                     <TableBody>
-                      {pendingRequests.map((req) => (
-                        <TableRow key={req.id}>
-                          <TableCell className="font-medium">{req.name}</TableCell>
-                          <TableCell>{req.nip}</TableCell>
-                          <TableCell className="capitalize">{req.type.replace('_', ' ')}</TableCell>
-                          <TableCell>
-                            {req.date} {(typeof req.location === 'object' && req.location !== null && req.location.endDate && req.location.endDate !== req.date) ? `s/d ${req.location.endDate}` : ""}
-                          </TableCell>
-                          <TableCell className="max-w-xs truncate">
-                            <div className="truncate" title={typeof req.location === 'object' && req.location !== null ? req.location.reason : req.location}>
-                              {typeof req.location === 'object' && req.location !== null ? req.location.reason : req.location}
-                            </div>
-                            {req.photoUrl && req.photoUrl !== 'Image too large to save in spreadsheet' && (
-                              <div className="mt-1">
-                                <a href={req.photoUrl} target="_blank" rel="noreferrer" className="text-xs text-blue-600 hover:underline">Lihat Lampiran</a>
+                      {pendingRequests.map((req) => {
+                        const isLateReq = req.status === 'pending_telat';
+                        const locObj = typeof req.location === 'object' && req.location !== null ? req.location as { reason?: string; address?: string; endDate?: string } : null;
+                        const detailText = locObj ? (locObj.reason || locObj.address || JSON.stringify(req.location)) : (req.location as string || '-');
+                        const typeLabel =
+                          req.type === 'dinas_luar'
+                            ? 'Dinas Luar'
+                            : req.type === 'sakit'
+                              ? 'Sakit'
+                              : req.type === 'Cuti' || req.type === 'cuti'
+                                ? 'Cuti Tahunan'
+                                : req.type === 'izin'
+                                  ? 'Izin'
+                                  : req.type.replace('_', ' ');
+                        return (
+                          <TableRow key={req.id}>
+                            <TableCell className="font-medium">{req.name}</TableCell>
+                            <TableCell>{req.nip}</TableCell>
+                            <TableCell>
+                              {isLateReq ? (
+                                <div className="flex flex-col gap-1">
+                                  <span className="inline-flex w-fit items-center rounded-full bg-amber-100 px-2.5 py-0.5 text-xs font-medium text-amber-800">
+                                    Absen Telat
+                                  </span>
+                                  {req.shift && <span className="text-[11px] text-slate-500">Shift: {req.shift}</span>}
+                                </div>
+                              ) : (
+                                <span className={`inline-flex w-fit items-center rounded-full px-2.5 py-0.5 text-xs font-medium ${
+                                  req.type === 'dinas_luar'
+                                    ? 'bg-purple-100 text-purple-800'
+                                    : req.type === 'sakit'
+                                      ? 'bg-blue-100 text-blue-800'
+                                      : 'bg-slate-100 text-slate-800'
+                                }`}>
+                                  {typeLabel}
+                                </span>
+                              )}
+                            </TableCell>
+                            <TableCell>
+                              {isLateReq ? (
+                                <span>{req.date} ({req.time || '-'})</span>
+                              ) : (
+                                <span>{req.date} {(locObj?.endDate && locObj.endDate !== req.date) ? `s/d ${locObj.endDate}` : ""}</span>
+                              )}
+                            </TableCell>
+                            <TableCell className="max-w-xs">
+                              <div className="truncate" title={detailText}>
+                                {detailText}
                               </div>
-                            )}
-                          </TableCell>
-                          <TableCell className="text-right">
-                            <div className="flex justify-end gap-2">
-                              <Button 
-                                size="sm" 
-                                className="bg-emerald-600 hover:bg-emerald-700 text-white flex items-center gap-1"
-                                onClick={() => handleApproveLeave(req.id, req.type)}
-                              >
-                                <Check className="h-4 w-4" />
-                                Setujui
-                              </Button>
-                              <Button 
-                                size="sm" 
-                                variant="outline" 
-                                className="border-rose-200 text-rose-600 hover:bg-rose-50 flex items-center gap-1"
-                                onClick={() => handleRejectLeave(req.id)}
-                              >
-                                <X className="h-4 w-4" />
-                                Tolak
-                              </Button>
-                            </div>
-                          </TableCell>
-                        </TableRow>
-                      ))}
+                              {req.photoUrl && req.photoUrl !== 'Image too large to save in spreadsheet' && (
+                                <div className="mt-1">
+                                  <button
+                                    type="button"
+                                    onClick={() => setPreviewAttachment({
+                                      url: req.photoUrl!,
+                                      title: `${isLateReq ? 'Foto Absen Telat' : `Bukti ${typeLabel}`} - ${req.name} (${req.date})`
+                                    })}
+                                    className="text-xs text-blue-600 hover:underline inline-flex items-center gap-1"
+                                  >
+                                    <FileText className="h-3.5 w-3.5" />
+                                    {isLateReq ? 'Lihat Foto Absen' : 'Lihat Bukti Lampiran'}
+                                  </button>
+                                </div>
+                              )}
+                            </TableCell>
+                            <TableCell className="text-right">
+                              <div className="flex justify-end gap-2">
+                                <Button 
+                                  size="sm" 
+                                  className="bg-emerald-600 hover:bg-emerald-700 text-white flex items-center gap-1"
+                                  onClick={() => handleApproveLeave(req.id, req.type, req.status)}
+                                >
+                                  <Check className="h-4 w-4" />
+                                  Setujui
+                                </Button>
+                                <Button 
+                                  size="sm" 
+                                  variant="outline" 
+                                  className="border-rose-200 text-rose-600 hover:bg-rose-50 flex items-center gap-1"
+                                  onClick={() => handleRejectLeave(req.id)}
+                                >
+                                  <X className="h-4 w-4" />
+                                  Tolak
+                                </Button>
+                              </div>
+                            </TableCell>
+                          </TableRow>
+                        );
+                      })}
                     </TableBody>
                   </Table>
                 </div>
               )}
             </CardContent>
           </Card>
+
+          <Dialog open={!!previewAttachment} onOpenChange={(open) => { if (!open) setPreviewAttachment(null); }}>
+            <DialogContent className="sm:max-w-lg">
+              <DialogHeader>
+                <DialogTitle>{previewAttachment?.title}</DialogTitle>
+              </DialogHeader>
+              {previewAttachment && (
+                <div className="space-y-3">
+                  <div className="flex flex-col items-center justify-center rounded-md border bg-slate-50 p-2 min-h-[200px]">
+                    <img
+                      src={previewAttachment.url}
+                      alt={previewAttachment.title}
+                      className="max-h-96 w-auto rounded object-contain"
+                      onError={(e) => {
+                        const img = e.currentTarget;
+                        img.style.display = 'none';
+                        const iframe = img.nextElementSibling as HTMLIFrameElement | null;
+                        if (iframe) iframe.style.display = 'block';
+                      }}
+                    />
+                    <iframe
+                      src={previewAttachment.url}
+                      title={previewAttachment.title}
+                      className="hidden w-full h-96 rounded border bg-white"
+                    />
+                  </div>
+                  <div className="flex justify-end">
+                    <a
+                      href={previewAttachment.url}
+                      target="_blank"
+                      rel="noreferrer"
+                      className="text-xs text-blue-600 hover:underline"
+                    >
+                      Buka di Tab Baru / Unduh
+                    </a>
+                  </div>
+                </div>
+              )}
+            </DialogContent>
+          </Dialog>
         </TabsContent>
 
         <TabsContent value="holidays">
@@ -1773,6 +1907,226 @@ export default function AdminAttendance() {
               )}
             </CardContent>
           </Card>
+        </TabsContent>
+
+        <TabsContent value="kegiatan" className="space-y-6">
+          <ActivityScheduleManager />
+
+          <Card>
+            <CardHeader className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
+              <div>
+                <CardTitle>Rekap Absensi Senam Pagi &amp; Upacara Apel</CardTitle>
+                <p className="text-xs text-slate-500 mt-1">
+                  Data tersimpan pada sheet terpisah (<strong>AbsensiSenam</strong> &amp; <strong>AbsensiApel</strong>) agar tidak berbenturan dengan absensi harian.
+                </p>
+              </div>
+              <div className="flex flex-wrap items-center gap-2">
+                <Button variant="outline" size="sm" onClick={fetchActivityAttendance}>
+                  <RefreshCw className="h-4 w-4 mr-1.5" />
+                  Refresh
+                </Button>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={async () => {
+                    const filtered = activityAttendance.filter((r) => {
+                      const matchType = activityFilterType === "all" || r.activityType === activityFilterType;
+                      const q = activitySearch.toLowerCase();
+                      const matchSearch =
+                        !q ||
+                        (r.name || "").toLowerCase().includes(q) ||
+                        (r.nip || "").toLowerCase().includes(q) ||
+                        (r.activityName || "").toLowerCase().includes(q);
+                      return matchType && matchSearch;
+                    });
+                    const workbook = new ExcelJS.Workbook();
+                    const ws = workbook.addWorksheet("Absensi Senam & Apel");
+                    ws.mergeCells("A1:H1");
+                    ws.getCell("A1").value = `Rekap Absensi Kegiatan (Senam & Apel) - ${puskesmasName}`;
+                    ws.getCell("A1").font = { size: 14, bold: true };
+                    ws.getCell("A1").alignment = { horizontal: "center" };
+                    ws.getRow(3).values = ["Tanggal", "Jam", "Nama Karyawan", "NIP", "Jenis", "Nama Kegiatan", "Lokasi", "Status"];
+                    ws.getRow(3).font = { bold: true };
+                    filtered.forEach((r) => {
+                      ws.addRow([
+                        r.date,
+                        r.time,
+                        r.name,
+                        r.nip,
+                        r.activityType === "apel" ? "Upacara Apel" : "Senam Pagi",
+                        r.activityName,
+                        `${r.location || "-"} (${r.distance || 0} m)`,
+                        r.status || "Hadir",
+                      ]);
+                    });
+                    ws.columns.forEach((c) => { c.width = 18; });
+                    ws.getColumn(3).width = 25;
+                    const buffer = await workbook.xlsx.writeBuffer();
+                    const blob = new Blob([buffer], { type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" });
+                    const url = window.URL.createObjectURL(blob);
+                    const a = document.createElement("a");
+                    a.href = url;
+                    a.download = `Absensi_Senam_Apel_${format(getServerTime(), "yyyy-MM-dd")}.xlsx`;
+                    a.click();
+                    window.URL.revokeObjectURL(url);
+                  }}
+                >
+                  <Download className="h-4 w-4 mr-1.5" />
+                  Ekspor Excel
+                </Button>
+              </div>
+            </CardHeader>
+            <CardContent className="space-y-4">
+              <div className="flex flex-col sm:flex-row gap-3">
+                <Select value={activityFilterType} onValueChange={setActivityFilterType}>
+                  <SelectTrigger className="w-full sm:w-52">
+                    <SelectValue placeholder="Filter Kegiatan" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="all">Semua Kegiatan</SelectItem>
+                    <SelectItem value="senam">Senam Pagi (AbsensiSenam)</SelectItem>
+                    <SelectItem value="apel">Upacara Apel (AbsensiApel)</SelectItem>
+                  </SelectContent>
+                </Select>
+                <Input
+                  placeholder="Cari nama, NIP, atau kegiatan..."
+                  value={activitySearch}
+                  onChange={(e) => setActivitySearch(e.target.value)}
+                  className="max-w-sm"
+                />
+              </div>
+
+              {(() => {
+                const filteredActivities = activityAttendance.filter((r) => {
+                  const matchType = activityFilterType === "all" || r.activityType === activityFilterType;
+                  const q = activitySearch.toLowerCase();
+                  const matchSearch =
+                    !q ||
+                    (r.name || "").toLowerCase().includes(q) ||
+                    (r.nip || "").toLowerCase().includes(q) ||
+                    (r.activityName || "").toLowerCase().includes(q);
+                  return matchType && matchSearch;
+                });
+
+                if (filteredActivities.length === 0) {
+                  return (
+                    <div className="text-center py-10 text-slate-500 text-sm">
+                      Belum ada data absensi Senam Pagi atau Upacara Apel.
+                    </div>
+                  );
+                }
+
+                return (
+                  <div className="rounded-md border overflow-x-auto">
+                    <Table>
+                      <TableHeader>
+                        <TableRow>
+                          <TableHead>Tanggal &amp; Jam</TableHead>
+                          <TableHead>Nama Karyawan</TableHead>
+                          <TableHead>Kegiatan</TableHead>
+                          <TableHead>Lokasi &amp; Jarak</TableHead>
+                          <TableHead>Status</TableHead>
+                          <TableHead>Foto</TableHead>
+                          <TableHead className="text-right">Aksi</TableHead>
+                        </TableRow>
+                      </TableHeader>
+                      <TableBody>
+                        {filteredActivities.map((rec) => (
+                          <TableRow key={`${rec.activityType}-${rec.id}`}>
+                            <TableCell className="whitespace-nowrap">
+                              <div className="font-medium">{rec.date}</div>
+                              <div className="text-xs text-slate-500">{rec.time} WIB</div>
+                            </TableCell>
+                            <TableCell>
+                              <div className="font-medium">{rec.name}</div>
+                              <div className="text-xs text-slate-500">{rec.nip}</div>
+                            </TableCell>
+                            <TableCell>
+                              <div className="font-medium">{rec.activityName}</div>
+                              <span
+                                className={`inline-block mt-0.5 text-[10px] font-semibold px-2 py-0.5 rounded-full ${
+                                  rec.activityType === "apel"
+                                    ? "bg-indigo-100 text-indigo-700"
+                                    : "bg-teal-100 text-teal-700"
+                                }`}
+                              >
+                                {rec.activityType === "apel" ? "Apel" : "Senam"}
+                              </span>
+                            </TableCell>
+                            <TableCell>
+                              <div className="text-sm">{rec.location || "-"}</div>
+                              <div className="text-xs text-slate-500">Jarak: {rec.distance || 0} m</div>
+                            </TableCell>
+                            <TableCell>
+                              <span className="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium bg-emerald-100 text-emerald-700">
+                                {rec.status || "Hadir"}
+                              </span>
+                            </TableCell>
+                            <TableCell>
+                              {rec.photoUrl && rec.photoUrl !== "Image too large to save in spreadsheet" ? (
+                                <button
+                                  type="button"
+                                  onClick={() =>
+                                    setPreviewAttachment({
+                                      url: rec.photoUrl,
+                                      title: `Foto ${rec.activityName} - ${rec.name} (${rec.date})`,
+                                    })
+                                  }
+                                  className="text-xs text-blue-600 hover:underline inline-flex items-center gap-1"
+                                >
+                                  <FileText className="h-3.5 w-3.5" />
+                                  Lihat Foto
+                                </button>
+                              ) : (
+                                <span className="text-xs text-slate-400">-</span>
+                              )}
+                            </TableCell>
+                            <TableCell className="text-right">
+                              <Button
+                                variant="ghost"
+                                size="icon"
+                                className="text-red-500 hover:text-red-700 hover:bg-red-50"
+                                onClick={async () => {
+                                  const res = await fetch(`/api/activity-attendance/${rec.activityType}/${rec.id}`, {
+                                    method: "DELETE",
+                                  });
+                                  if (res.ok) {
+                                    toast.success("Data absensi kegiatan dihapus");
+                                    fetchActivityAttendance();
+                                  } else {
+                                    toast.error("Gagal menghapus data");
+                                  }
+                                }}
+                              >
+                                <Trash2 className="h-4 w-4" />
+                              </Button>
+                            </TableCell>
+                          </TableRow>
+                        ))}
+                      </TableBody>
+                    </Table>
+                  </div>
+                );
+              })()}
+            </CardContent>
+          </Card>
+
+          <Dialog open={!!previewAttachment} onOpenChange={(open) => { if (!open) setPreviewAttachment(null); }}>
+            <DialogContent className="sm:max-w-lg">
+              <DialogHeader>
+                <DialogTitle>{previewAttachment?.title}</DialogTitle>
+              </DialogHeader>
+              {previewAttachment && (
+                <div className="flex flex-col items-center justify-center rounded-md border bg-slate-50 p-2 min-h-[200px]">
+                  <img
+                    src={previewAttachment.url}
+                    alt={previewAttachment.title}
+                    className="max-h-96 w-auto rounded object-contain"
+                  />
+                </div>
+              )}
+            </DialogContent>
+          </Dialog>
         </TabsContent>
       </Tabs>
     </div>
